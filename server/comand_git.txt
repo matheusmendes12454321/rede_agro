@@ -1,0 +1,17 @@
+git add .
+git commit -m "Descricao do que voce alterou"
+
+baixar mudanças
+git pull origin main
+
+minhas aletracoes + codigo novo
+git push origin main
+
+arquivos modificados
+git status
+
+erro do remoto
+git remote set-url origin https://github.com/matheusmendes12454321/rede_agro.git
+
+desfazer aletracoes
+git restore .  
