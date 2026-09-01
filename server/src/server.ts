@@ -1,8 +1,10 @@
 import express from 'express';
-import type { RequestHandler } from 'express';import cors from 'cors';
+import type { RequestHandler } from 'express';
+import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
+import { validarDocumentoComOCR } from './validador.js';
 
 dotenv.config();
 
@@ -13,12 +15,15 @@ app.use(cors());
 app.use(express.json());
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
-// Utilize a SERVICE_ROLE key se configurada no .env para dar bypass no RLS pelo backend
 const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('[ERRO CRÍTICO] SUPABASE_URL ou SUPABASE_KEY não configuradas no .env!');
+}
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Configuração do Multer (Armazenamento em memória para extrair o Buffer)
+// Configuração do Multer (Armazenamento temporário em memória RAM)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 } // Limite de 10MB por arquivo
@@ -29,12 +34,14 @@ const uploadFields = upload.fields([
   { name: 'fotoDocumento', maxCount: 1 }
 ]);
 
+/**
+ * Handler de Processamento de Cadastro e Validação OCR
+ */
 const processarCadastro: RequestHandler = async (req, res) => {
-  console.log('--------------------------------------------------');
-  console.log('[LOG] Requisição de cadastro recebida.');
+  console.log('\n==================================================');
+  console.log('[LOG INIT] Nova requisição de cadastro recebida.');
 
   try {
-    // 1. Parsing seguro dos campos JSON enviados via FormData
     const dadosPessoais = typeof req.body.dadosPessoais === 'string'
       ? JSON.parse(req.body.dadosPessoais)
       : req.body.dadosPessoais || {};
@@ -45,124 +52,197 @@ const processarCadastro: RequestHandler = async (req, res) => {
 
     const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
-    console.log('[LOG] Nome do Entregador:', dadosPessoais.nome);
-    console.log('[LOG] Arquivos Recebidos:', files ? Object.keys(files) : 'Nenhum');
+    let statusFinal = 'PENDENTE';
+    let cnhValida = false;
+    let docValido = false;
 
-    // 2. Inserir Entregador no Supabase
-    const { data: novoEntregador, error: errEntregador } = await supabase
-      .from('entregadores')
+    // 1. Validação OCR Automática da CNH (CPF)
+    if (files?.fotoCnh?.[0] && dadosPessoais.cpf) {
+      console.log('[OCR] Analisando imagem da CNH...');
+      const resultadoCnh = await validarDocumentoComOCR(files.fotoCnh[0].buffer, dadosPessoais.cpf);
+      cnhValida = resultadoCnh.valido;
+      console.log(`[OCR CNH] CPF encontrado na imagem? ${cnhValida ? 'SIM' : 'NÃO'}`);
+    }
+
+    // 2. Validação OCR Automática do Veículo (Placa)
+    if (files?.fotoDocumento?.[0] && dadosVeiculo.placa) {
+      console.log('[OCR] Analisando imagem do documento do veículo...');
+      const resultadoDoc = await validarDocumentoComOCR(files.fotoDocumento[0].buffer, dadosVeiculo.placa);
+      docValido = resultadoDoc.valido;
+      console.log(`[OCR VEÍCULO] Placa encontrada na imagem? ${docValido ? 'SIM' : 'NÃO'}`);
+    }
+
+    // Aprovação automática se ambos forem validados pelo Tesseract.js
+    if (cnhValida && docValido) {
+      statusFinal = 'APROVADO';
+    }
+
+    // 3. Inserir Usuário no Supabase (Tabela "Usuario")
+    const { data: novoUsuario, error: errUsuario } = await supabase
+      .from('Usuario')
       .insert([{
         nome: dadosPessoais.nome,
         cpf: dadosPessoais.cpf,
-        telefone: dadosPessoais.telefone,
         email: dadosPessoais.email,
+        telefone: dadosPessoais.telefone,
         senha: dadosPessoais.senha,
-        endereco: dadosPessoais.endereco,
-        status_aprovacao: 'PENDENTE'
+        tipo: 'ENTREGADOR',
+        status: statusFinal
       }])
       .select()
       .single();
 
-    if (errEntregador) {
-      console.error('[ERRO SUPABASE - ENTREGADOR]:', errEntregador.message);
-      res.status(400).json({ error: `Erro ao criar entregador: ${errEntregador.message}` });
+    if (errUsuario) {
+      console.error('[ERRO SUPABASE - USUARIO]:', errUsuario.message);
+      res.status(400).json({ error: `Erro ao criar usuário: ${errUsuario.message}` });
       return;
     }
 
-    let pathCnh: string | null = null;
-    let pathDoc: string | null = null;
+    console.log('[SUCESSO] Usuário cadastrado. ID:', novoUsuario.id);
 
-    // 3. Upload da foto da CNH no Supabase Storage
+    let urlPublicaCnh = '';
+    let urlPublicaDoc = '';
+
+    // 4. Upload da CNH para o Storage e inserção na tabela "Foto"
     if (files?.fotoCnh?.[0]) {
       const fileCnh = files.fotoCnh[0];
       const ext = fileCnh.originalname.split('.').pop() || 'jpg';
-      pathCnh = `cnh/${novoEntregador.id}_${Date.now()}.${ext}`;
+      const pathCnh = `cnh/${novoUsuario.id}_${Date.now()}.${ext}`;
 
-      const { data: uploadCnhData, error: errCnh } = await supabase.storage
+      const { data: uploadData, error: errUploadCnh } = await supabase.storage
         .from('documentos')
-        .upload(pathCnh, fileCnh.buffer, {
-          contentType: fileCnh.mimetype || 'image/jpeg',
-          upsert: true
-        });
+        .upload(pathCnh, fileCnh.buffer, { contentType: fileCnh.mimetype || 'image/jpeg', upsert: true });
 
-      if (errCnh) {
-        console.error('[ERRO STORAGE - CNH]:', errCnh.message);
+      if (errUploadCnh) {
+        console.error('[ERRO STORAGE CNH]:', errUploadCnh.message);
       } else {
-        console.log('[SUCESSO STORAGE - CNH]:', uploadCnhData.path);
+        urlPublicaCnh = supabase.storage.from('documentos').getPublicUrl(uploadData.path).data.publicUrl;
+
+        await supabase.from('Foto').insert([{
+          usuario_id: novoUsuario.id,
+          tipo_documento: 'CNH',
+          url: urlPublicaCnh
+        }]);
       }
     }
 
-    // 4. Upload do Documento do Veículo no Supabase Storage
+    // 5. Upload do Documento do Veículo para o Storage e inserção na tabela "Foto"
     if (files?.fotoDocumento?.[0]) {
       const fileDoc = files.fotoDocumento[0];
       const ext = fileDoc.originalname.split('.').pop() || 'jpg';
-      pathDoc = `documentos/${novoEntregador.id}_${Date.now()}.${ext}`;
+      const pathDoc = `veiculos/${novoUsuario.id}_${Date.now()}.${ext}`;
 
-      const { data: uploadDocData, error: errDoc } = await supabase.storage
+      const { data: uploadData, error: errUploadDoc } = await supabase.storage
         .from('documentos')
-        .upload(pathDoc, fileDoc.buffer, {
-          contentType: fileDoc.mimetype || 'image/jpeg',
-          upsert: true
-        });
+        .upload(pathDoc, fileDoc.buffer, { contentType: fileDoc.mimetype || 'image/jpeg', upsert: true });
 
-      if (errDoc) {
-        console.error('[ERRO STORAGE - DOC]:', errDoc.message);
+      if (errUploadDoc) {
+        console.error('[ERRO STORAGE DOC]:', errUploadDoc.message);
       } else {
-        console.log('[SUCESSO STORAGE - DOC]:', uploadDocData.path);
+        urlPublicaDoc = supabase.storage.from('documentos').getPublicUrl(uploadData.path).data.publicUrl;
+
+        await supabase.from('Foto').insert([{
+          usuario_id: novoUsuario.id,
+          tipo_documento: 'DOC_VEICULO',
+          url: urlPublicaDoc
+        }]);
       }
     }
 
-    // 5. Atualizar entregador com os caminhos das imagens
-    if (pathCnh || pathDoc) {
-      const { error: errUpdate } = await supabase
-        .from('entregadores')
-        .update({
-          foto_cnh_url: pathCnh,
-          foto_documento_url: pathDoc,
-          status_documentacao: 'EM_ANALISE'
-        })
-        .eq('id', novoEntregador.id);
-
-      if (errUpdate) {
-        console.error('[ERRO UPDATE URLS]:', errUpdate.message);
-      } else {
-        console.log('[SUCESSO DB UPDATE] URLs salvas para o ID:', novoEntregador.id);
-      }
-    }
-
-    // 6. Cadastrar o Veículo no Supabase
-    const { error: errVeiculo } = await supabase
-      .from('veiculos')
-      .insert([{
-        entregador_id: novoEntregador.id,
-        tipo: dadosVeiculo.tipo,
-        marca_modelo: dadosVeiculo.marcaModelo,
-        placa: dadosVeiculo.placa
-      }]);
+    // 6. Cadastrar dados do Veículo na tabela "Veiculo"
+    const { error: errVeiculo } = await supabase.from('Veiculo').insert([{
+      usuario_id: novoUsuario.id,
+      tipo: dadosVeiculo.tipo,
+      marca_modelo: dadosVeiculo.marcaModelo,
+      placa: dadosVeiculo.placa
+    }]);
 
     if (errVeiculo) {
-      console.error('[ERRO SUPABASE - VEÍCULO]:', errVeiculo.message);
-      res.status(400).json({ error: `Erro ao cadastrar veículo: ${errVeiculo.message}` });
-      return;
+      console.error('[ERRO SUPABASE - VEICULO]:', errVeiculo.message);
     }
 
     res.status(201).json({
-      message: 'Cadastro e upload de documentos concluídos com sucesso!',
-      entregadorId: novoEntregador.id
+      message: 'Cadastro processado com sucesso!',
+      usuarioId: novoUsuario.id,
+      status: statusFinal,
+      validacaoAutomatica: {
+        cnhAprovada: cnhValida,
+        documentoVeiculoAprovado: docValido
+      }
     });
-    return;
 
   } catch (error: any) {
-    console.error('[ERRO SERVIDOR]:', error.message);
+    console.error('[ERRO CRÍTICO NO CADASTRO]:', error);
     res.status(500).json({ error: error.message || 'Erro interno do servidor.' });
-    return;
   }
 };
 
-// Rotas flexíveis (aceita rotas com ou sem prefixo /api)
+/**
+ * Handler de Autenticação / Login
+ */
+const processarLogin: RequestHandler = async (req, res) => {
+  try {
+    const { login, senha } = req.body;
+
+    if (!login || !senha) {
+      res.status(400).json({ error: 'Informe o e-mail/CPF e a senha.' });
+      return;
+    }
+
+    const termoLogin = String(login).trim();
+
+    // 1. Busca o usuário no Supabase
+    const { data: usuario, error } = await supabase
+      .from('Usuario')
+      .select(`
+        id, nome, cpf, email, telefone, tipo, status,
+        Veiculo (*),
+        Foto (*)
+      `)
+      .or(`email.eq.${termoLogin},cpf.eq.${termoLogin}`)
+      .eq('senha', senha)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[ERRO DB LOGIN]:', error.message);
+      res.status(500).json({ error: 'Erro ao consultar banco de dados.' });
+      return;
+    }
+
+    // 2. Valida se a conta existe / senha bate
+    if (!usuario) {
+      res.status(401).json({ error: 'E-mail/CPF ou senha inválidos.' });
+      return;
+    }
+
+    // 3. TRAVA DE SEGURANÇA: Verifica se a conta está APROVADA
+    if (usuario.status !== 'APROVADO') {
+      res.status(403).json({ 
+        error: `Sua conta está com status "${usuario.status}". Aguarde a análise dos documentos para acessar o aplicativo.` 
+      });
+      return;
+    }
+
+    // Retorna os dados se estiver tudo certo
+    res.status(200).json({
+      message: 'Login realizado com sucesso!',
+      usuario
+    });
+
+  } catch (error: any) {
+    console.error('[ERRO NO HANDLER DE LOGIN]:', error);
+    res.status(500).json({ error: 'Erro interno ao realizar login.' });
+  }
+};
+
+// Configuração das Rotas
 app.post('/cadastrar', uploadFields, processarCadastro);
 app.post('/api/cadastrar', uploadFields, processarCadastro);
 
+app.post('/login', processarLogin);
+app.post('/api/login', processarLogin);
+
+// Inicialização do Servidor
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[SERVIDOR OK] API rodando na porta ${PORT}`);
 });
