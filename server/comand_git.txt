@@ -6,7 +6,7 @@ git pull origin main
 
 minhas aletracoes + codigo novo
 git push origin main
-
+dd
 arquivos modificados
 git status
 
