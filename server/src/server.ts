@@ -14,6 +14,10 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Servir arquivos estáticos do painel de testes
+app.use('/teste', express.static('public'));
+
+// Configuração do Supabase
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
 
@@ -23,10 +27,10 @@ if (!supabaseUrl || !supabaseKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Configuração do Multer (Armazenamento temporário em memória RAM)
+// Configuração de upload de fotos (Multer)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // Limite de 10MB por arquivo
+  limits: { fileSize: 10 * 1024 * 1024 }
 });
 
 const uploadFields = upload.fields([
@@ -34,50 +38,32 @@ const uploadFields = upload.fields([
   { name: 'fotoDocumento', maxCount: 1 }
 ]);
 
-/**
- * Handler de Processamento de Cadastro e Validação OCR
- */
+/* ==========================================================================
+   1. CADASTRO E LOGIN DE ENTREGADORES
+   ========================================================================== */
+
 const processarCadastro: RequestHandler = async (req, res) => {
-  console.log('\n==================================================');
-  console.log('[LOG INIT] Nova requisição de cadastro recebida.');
-
   try {
-    const dadosPessoais = typeof req.body.dadosPessoais === 'string'
-      ? JSON.parse(req.body.dadosPessoais)
-      : req.body.dadosPessoais || {};
-
-    const dadosVeiculo = typeof req.body.dadosVeiculo === 'string'
-      ? JSON.parse(req.body.dadosVeiculo)
-      : req.body.dadosVeiculo || {};
-
+    const dadosPessoais = typeof req.body.dadosPessoais === 'string' ? JSON.parse(req.body.dadosPessoais) : req.body.dadosPessoais || {};
+    const dadosVeiculo = typeof req.body.dadosVeiculo === 'string' ? JSON.parse(req.body.dadosVeiculo) : req.body.dadosVeiculo || {};
     const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
     let statusFinal = 'PENDENTE';
     let cnhValida = false;
     let docValido = false;
 
-    // 1. Validação OCR Automática da CNH (CPF)
     if (files?.fotoCnh?.[0] && dadosPessoais.cpf) {
-      console.log('[OCR] Analisando imagem da CNH...');
-      const resultadoCnh = await validarDocumentoComOCR(files.fotoCnh[0].buffer, dadosPessoais.cpf);
-      cnhValida = resultadoCnh.valido;
-      console.log(`[OCR CNH] CPF encontrado na imagem? ${cnhValida ? 'SIM' : 'NÃO'}`);
+      const resCnh = await validarDocumentoComOCR(files.fotoCnh[0].buffer, dadosPessoais.cpf);
+      cnhValida = resCnh.valido;
     }
 
-    // 2. Validação OCR Automática do Veículo (Placa)
     if (files?.fotoDocumento?.[0] && dadosVeiculo.placa) {
-      console.log('[OCR] Analisando imagem do documento do veículo...');
-      const resultadoDoc = await validarDocumentoComOCR(files.fotoDocumento[0].buffer, dadosVeiculo.placa);
-      docValido = resultadoDoc.valido;
-      console.log(`[OCR VEÍCULO] Placa encontrada na imagem? ${docValido ? 'SIM' : 'NÃO'}`);
+      const resDoc = await validarDocumentoComOCR(files.fotoDocumento[0].buffer, dadosVeiculo.placa);
+      docValido = resDoc.valido;
     }
 
-    // Aprovação automática se ambos forem validados pelo Tesseract.js
-    if (cnhValida && docValido) {
-      statusFinal = 'APROVADO';
-    }
+    if (cnhValida && docValido) statusFinal = 'APROVADO';
 
-    // 3. Inserir Usuário no Supabase (Tabela "Usuario")
     const { data: novoUsuario, error: errUsuario } = await supabase
       .from('Usuario')
       .insert([{
@@ -93,156 +79,217 @@ const processarCadastro: RequestHandler = async (req, res) => {
       .single();
 
     if (errUsuario) {
-      console.error('[ERRO SUPABASE - USUARIO]:', errUsuario.message);
       res.status(400).json({ error: `Erro ao criar usuário: ${errUsuario.message}` });
       return;
     }
 
-    console.log('[SUCESSO] Usuário cadastrado. ID:', novoUsuario.id);
-
-    let urlPublicaCnh = '';
-    let urlPublicaDoc = '';
-
-    // 4. Upload da CNH para o Storage e inserção na tabela "Foto"
     if (files?.fotoCnh?.[0]) {
       const fileCnh = files.fotoCnh[0];
-      const ext = fileCnh.originalname.split('.').pop() || 'jpg';
-      const pathCnh = `cnh/${novoUsuario.id}_${Date.now()}.${ext}`;
-
-      const { data: uploadData, error: errUploadCnh } = await supabase.storage
-        .from('documentos')
-        .upload(pathCnh, fileCnh.buffer, { contentType: fileCnh.mimetype || 'image/jpeg', upsert: true });
-
-      if (errUploadCnh) {
-        console.error('[ERRO STORAGE CNH]:', errUploadCnh.message);
-      } else {
-        urlPublicaCnh = supabase.storage.from('documentos').getPublicUrl(uploadData.path).data.publicUrl;
-
-        await supabase.from('Foto').insert([{
-          usuario_id: novoUsuario.id,
-          tipo_documento: 'CNH',
-          url: urlPublicaCnh
-        }]);
+      const pathCnh = `cnh/${novoUsuario.id}_${Date.now()}.jpg`;
+      const { data: uploadData } = await supabase.storage.from('documentos').upload(pathCnh, fileCnh.buffer, { contentType: 'image/jpeg', upsert: true });
+      if (uploadData) {
+        const url = supabase.storage.from('documentos').getPublicUrl(uploadData.path).data.publicUrl;
+        await supabase.from('Foto').insert([{ usuario_id: novoUsuario.id, tipo_documento: 'CNH', url }]);
       }
     }
 
-    // 5. Upload do Documento do Veículo para o Storage e inserção na tabela "Foto"
-    if (files?.fotoDocumento?.[0]) {
-      const fileDoc = files.fotoDocumento[0];
-      const ext = fileDoc.originalname.split('.').pop() || 'jpg';
-      const pathDoc = `veiculos/${novoUsuario.id}_${Date.now()}.${ext}`;
-
-      const { data: uploadData, error: errUploadDoc } = await supabase.storage
-        .from('documentos')
-        .upload(pathDoc, fileDoc.buffer, { contentType: fileDoc.mimetype || 'image/jpeg', upsert: true });
-
-      if (errUploadDoc) {
-        console.error('[ERRO STORAGE DOC]:', errUploadDoc.message);
-      } else {
-        urlPublicaDoc = supabase.storage.from('documentos').getPublicUrl(uploadData.path).data.publicUrl;
-
-        await supabase.from('Foto').insert([{
-          usuario_id: novoUsuario.id,
-          tipo_documento: 'DOC_VEICULO',
-          url: urlPublicaDoc
-        }]);
-      }
-    }
-
-    // 6. Cadastrar dados do Veículo na tabela "Veiculo"
-    const { error: errVeiculo } = await supabase.from('Veiculo').insert([{
+    await supabase.from('Veiculo').insert([{
       usuario_id: novoUsuario.id,
       tipo: dadosVeiculo.tipo,
       marca_modelo: dadosVeiculo.marcaModelo,
       placa: dadosVeiculo.placa
     }]);
 
-    if (errVeiculo) {
-      console.error('[ERRO SUPABASE - VEICULO]:', errVeiculo.message);
-    }
-
     res.status(201).json({
       message: 'Cadastro processado com sucesso!',
       usuarioId: novoUsuario.id,
-      status: statusFinal,
-      validacaoAutomatica: {
-        cnhAprovada: cnhValida,
-        documentoVeiculoAprovado: docValido
-      }
+      status: statusFinal
     });
-
   } catch (error: any) {
-    console.error('[ERRO CRÍTICO NO CADASTRO]:', error);
-    res.status(500).json({ error: error.message || 'Erro interno do servidor.' });
+    res.status(500).json({ error: error.message });
   }
 };
 
-/**
- * Handler de Autenticação / Login
- */
 const processarLogin: RequestHandler = async (req, res) => {
   try {
     const { login, senha } = req.body;
-
-    if (!login || !senha) {
-      res.status(400).json({ error: 'Informe o e-mail/CPF e a senha.' });
-      return;
-    }
-
     const termoLogin = String(login).trim();
 
-    // 1. Busca o usuário no Supabase
     const { data: usuario, error } = await supabase
       .from('Usuario')
-      .select(`
-        id, nome, cpf, email, telefone, tipo, status,
-        Veiculo (*),
-        Foto (*)
-      `)
+      .select('*, Veiculo(*), Foto(*)')
       .or(`email.eq.${termoLogin},cpf.eq.${termoLogin}`)
       .eq('senha', senha)
       .maybeSingle();
 
-    if (error) {
-      console.error('[ERRO DB LOGIN]:', error.message);
-      res.status(500).json({ error: 'Erro ao consultar banco de dados.' });
-      return;
-    }
-
-    // 2. Valida se a conta existe / senha bate
-    if (!usuario) {
+    if (error || !usuario) {
       res.status(401).json({ error: 'E-mail/CPF ou senha inválidos.' });
       return;
     }
 
-    // 3. TRAVA DE SEGURANÇA: Verifica se a conta está APROVADA
     if (usuario.status !== 'APROVADO') {
-      res.status(403).json({ 
-        error: `Sua conta está com status "${usuario.status}". Aguarde a análise dos documentos para acessar o aplicativo.` 
-      });
+      res.status(403).json({ error: `Sua conta está com status "${usuario.status}".` });
       return;
     }
 
-    // Retorna os dados se estiver tudo certo
-    res.status(200).json({
-      message: 'Login realizado com sucesso!',
-      usuario
-    });
-
+    res.status(200).json({ message: 'Login realizado com sucesso!', usuario });
   } catch (error: any) {
-    console.error('[ERRO NO HANDLER DE LOGIN]:', error);
     res.status(500).json({ error: 'Erro interno ao realizar login.' });
   }
 };
 
-// Configuração das Rotas
+/* ==========================================================================
+   2. GESTÃO DA CHAVE PIX DIRETA E CARTEIRA
+   ========================================================================== */
+
+// Salvar/Atualizar a Chave Pix da conta de menor (ou do recebedor)
+const salvarChavePix: RequestHandler = async (req, res) => {
+  try {
+    const { usuarioId, chavePix, tipoChave } = req.body;
+
+    if (!usuarioId || !chavePix || !tipoChave) {
+      res.status(400).json({ error: 'Campos usuarioId, chavePix e tipoChave são obrigatórios.' });
+      return;
+    }
+
+    const { error } = await supabase
+      .from('Usuario')
+      .update({
+        chave_pix: String(chavePix).trim(),
+        tipo_chave_pix: String(tipoChave).toUpperCase().trim()
+      })
+      .eq('id', usuarioId);
+
+    if (error) throw error;
+
+    res.status(200).json({ message: 'Chave Pix cadastrada com sucesso!' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Obter os dados da Chave Pix para exibir na tela do cliente
+const obterPixParaPagamento: RequestHandler = async (req, res) => {
+  try {
+    const { usuarioId } = req.params;
+
+    const { data: usuario, error } = await supabase
+      .from('Usuario')
+      .select('id, nome, chave_pix, tipo_chave_pix')
+      .eq('id', usuarioId)
+      .single();
+
+    if (error || !usuario?.chave_pix) {
+      res.status(400).json({ error: 'Chave Pix não encontrada para este usuário.' });
+      return;
+    }
+
+    res.status(200).json({
+      nomeRecebedor: usuario.nome,
+      chavePix: usuario.chave_pix,
+      tipoChavePix: usuario.tipo_chave_pix,
+      instrucao: `Faça a transferência Pix no app do seu banco usando a chave abaixo.`
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Registrar a corrida e atualizar o histórico
+const registrarCorrida: RequestHandler = async (req, res) => {
+  try {
+    const { entregadorId, entregaId, valorTotal } = req.body;
+
+    if (!entregadorId || !valorTotal) {
+      res.status(400).json({ error: 'Parâmetros entregadorId e valorTotal são obrigatórios.' });
+      return;
+    }
+
+    const valorFloat = parseFloat(valorTotal);
+    const taxaPlataforma = parseFloat((valorFloat * 0.15).toFixed(2));
+    const valorEntregador = parseFloat((valorFloat - taxaPlataforma).toFixed(2));
+
+    const { data: transacao, error } = await supabase
+      .from('Transacao')
+      .insert([{
+        usuario_id: entregadorId,
+        entrega_id: entregaId || null,
+        tipo: 'CREDITO',
+        valor: valorEntregador,
+        taxa_plataforma: taxaPlataforma,
+        valor_total: valorFloat,
+        status: 'CONCLUIDO',
+        gateway_txid: `PIX_DIRETO_${Date.now()}`
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.status(200).json({
+      message: 'Corrida registrada com sucesso!',
+      transacao
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Consultar o extrato e saldo acumulado
+const consultarCarteira: RequestHandler = async (req, res) => {
+  try {
+    const { usuarioId } = req.params;
+
+    const { data: usuario } = await supabase
+      .from('Usuario')
+      .select('chave_pix, tipo_chave_pix')
+      .eq('id', usuarioId)
+      .single();
+
+    const { data: transacoes, error } = await supabase
+      .from('Transacao')
+      .select('*')
+      .eq('usuario_id', usuarioId);
+
+    if (error) throw error;
+
+    const listaOrdenada = (transacoes || []).sort((a, b) => {
+      const dataA = new Date(a.criado_em || a.criada_em || 0).getTime();
+      const dataB = new Date(b.criado_em || b.criada_em || 0).getTime();
+      return dataB - dataA;
+    });
+
+    const saldoTotal = listaOrdenada
+      .filter((t) => t.status === 'CONCLUIDO')
+      .reduce((acc, t) => acc + Number(t.valor), 0);
+
+    res.status(200).json({
+      usuarioId,
+      saldo: saldoTotal.toFixed(2),
+      chavePix: usuario?.chave_pix || null,
+      tipoChavePix: usuario?.tipo_chave_pix || null,
+      extrato: listaOrdenada
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/* ==========================================================================
+   3. REGISTRO DAS ROTAS
+   ========================================================================== */
+
 app.post('/cadastrar', uploadFields, processarCadastro);
 app.post('/api/cadastrar', uploadFields, processarCadastro);
-
 app.post('/login', processarLogin);
 app.post('/api/login', processarLogin);
 
-// Inicialização do Servidor
+app.post('/api/carteira/salvar-chave-pix', salvarChavePix);
+app.get('/api/carteira/obter-pix/:usuarioId', obterPixParaPagamento);
+app.post('/api/carteira/registrar-corrida', registrarCorrida);
+app.get('/api/carteira/:usuarioId', consultarCarteira);
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[SERVIDOR OK] API rodando na porta ${PORT}`);
+  console.log(`[PAINEL DE TESTES] Acesse: http://localhost:${PORT}/teste`);
 });

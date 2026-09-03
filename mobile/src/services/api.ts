@@ -1,7 +1,13 @@
-import axios from 'axios';
+  import axios from 'axios';
+  import { Platform } from 'react-native';
 
-const SEU_IP_LOCAL = '192.168.5.21'; //colocar o ip local do pc q vai rodar o servidor
+  // Substitua pelo IP IPv4 atual do seu computador (confirme no terminal com "ipconfig")
+  const IP_COMPUTADOR = '192.168.5.21'; 
 
-export const api = axios.create({
-  baseURL: `http://${SEU_IP_LOCAL}:3000/api`,
-});
+  const BASE_URL = Platform.OS === 'web'
+    ? 'http://localhost:3000/api'
+    : `http://${IP_COMPUTADOR}:3000/api`;
+
+  export const api = axios.create({
+    baseURL: BASE_URL,
+  });

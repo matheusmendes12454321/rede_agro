@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pagamento Pix Direto</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f6f8; }
+    .container { max-width: 700px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h1, h2 { color: #2e7d32; }
+    .card { background: #e8f5e9; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-weight: bold; margin-bottom: 5px; }
+    input, select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+    button { background-color: #2e7d32; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 15px; margin-top: 5px; }
+    button:hover { background-color: #1b5e20; }
+    .pix-box { background: #fff3e0; padding: 15px; border-radius: 6px; margin-top: 15px; border: 1px dashed #e65100; }
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background-color: #f2f2f2; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Carteira - Modo Pix Direto</h1>
+
+  <div class="form-group">
+    <label for="usuarioId">ID do Entregador (UUID Supabase):</label>
+    <input type="text" id="usuarioId" placeholder="Cole o UUID do entregador...">
+    <button onclick="carregarCarteira()">Carregar Dados</button>
+  </div>
+
+  <div class="card">
+    <div>Ganhos Acumulados:</div>
+    <h2 id="saldoDisplay" style="margin: 5px 0; color: #1b5e20;">R$ 0,00</h2>
+    <div id="pixSalvoInfo">Chave Pix: Não cadastrada</div>
+  </div>
+
+  <hr>
+
+  <h2>1. Cadastrar Minha Chave Pix (Conta de Menor)</h2>
+  <div class="form-group">
+    <label for="tipoChave">Tipo de Chave:</label>
+    <select id="tipoChave">
+      <option value="CPF">CPF</option>
+      <option value="EMAIL">E-mail</option>
+      <option value="TELEFONE">Telefone</option>
+      <option value="ALEATORIA">Chave Aleatória</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="chavePix">Sua Chave Pix:</label>
+    <input type="text" id="chavePix" placeholder="Digite sua chave Pix...">
+  </div>
+  <button onclick="salvarChavePix()">Salvar Chave Pix</button>
+
+  <hr>
+
+  <h2>2. Mostrar Chave Pix para o Cliente Pagar</h2>
+  <button onclick="gerarDadosPix()">Gerar Dados para Pagamento</button>
+
+  <div id="pixDisplay" class="pix-box" style="display: none;">
+    <h3>Dados para Transferência Pix:</h3>
+    <p><strong>Nome do Recebedor:</strong> <span id="recebedorNome"></span></p>
+    <p><strong>Tipo de Chave:</strong> <span id="recebedorTipo"></span></p>
+    <p><strong>Chave Pix:</strong> <strong id="recebedorChave" style="font-size: 18px; color: #d84315;"></strong></p>
+    <br>
+    <div class="form-group">
+      <label for="valorCorrida">Valor Pago da Corrida (R$):</label>
+      <input type="number" id="valorCorrida" value="25.00" step="0.01">
+    </div>
+    <button onclick="confirmarCorrida()">Confirmar Recebimento e Registrar Corrida</button>
+  </div>
+
+  <hr>
+
+  <h2>Histórico de Corridas</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Data</th>
+        <th>Tipo</th>
+        <th>Ganho Entregador (85%)</th>
+        <th>Taxa App (15%)</th>
+      </tr>
+    </thead>
+    <tbody id="extratoTable">
+      <tr><td colspan="4">Nenhum registro carregado.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+  const API_URL = '/api';
+
+  async function carregarCarteira() {
+    const usuarioId = document.getElementById('usuarioId').value.trim();
+    if (!usuarioId) return alert('Informe o ID do entregador');
+
+    try {
+      const res = await fetch(`${API_URL}/carteira/${usuarioId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      document.getElementById('saldoDisplay').innerText = `R$ ${data.saldo}`;
+      document.getElementById('pixSalvoInfo').innerText = data.chavePix 
+        ? `Chave Pix Cadastrada (${data.tipoChavePix}): ${data.chavePix}` 
+        : 'Chave Pix: Não cadastrada';
+
+      const tbody = document.getElementById('extratoTable');
+      tbody.innerHTML = '';
+
+      if (!data.extrato || data.extrato.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4">Nenhuma corrida registrada.</td></tr>';
+        return;
+      }
+
+      data.extrato.forEach(t => {
+        const dataBruta = t.criado_em || t.criada_em;
+        const dataFormatada = dataBruta ? new Date(dataBruta).toLocaleString('pt-BR') : '-';
+
+        const row = `<tr>
+          <td>${dataFormatada}</td>
+          <td><strong>${t.tipo}</strong></td>
+          <td style="color: green;">R$ ${Number(t.valor).toFixed(2)}</td>
+          <td>R$ ${Number(t.taxa_plataforma || 0).toFixed(2)}</td>
+        </tr>`;
+        tbody.innerHTML += row;
+      });
+    } catch (err) {
+      alert('Erro: ' + err.message);
+    }
+  }
+
+  async function salvarChavePix() {
+    const usuarioId = document.getElementById('usuarioId').value.trim();
+    const chavePix = document.getElementById('chavePix').value.trim();
+    const tipoChave = document.getElementById('tipoChave').value;
+
+    if (!usuarioId || !chavePix) return alert('Preencha o ID e a Chave Pix.');
+
+    try {
+      const res = await fetch(`${API_URL}/carteira/salvar-chave-pix`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usuarioId, chavePix, tipoChave })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      alert(data.message);
+      carregarCarteira();
+    } catch (err) {
+      alert('Erro: ' + err.message);
+    }
+  }
+
+  async function gerarDadosPix() {
+    const usuarioId = document.getElementById('usuarioId').value.trim();
+    if (!usuarioId) return alert('Informe o ID do entregador');
+
+    try {
+      const res = await fetch(`${API_URL}/carteira/obter-pix/${usuarioId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      document.getElementById('recebedorNome').innerText = data.nomeRecebedor;
+      document.getElementById('recebedorTipo').innerText = data.tipoChavePix;
+      document.getElementById('recebedorChave').innerText = data.chavePix;
+      document.getElementById('pixDisplay').style.display = 'block';
+    } catch (err) {
+      alert('Erro: ' + err.message);
+    }
+  }
+
+  async function confirmarCorrida() {
+    const usuarioId = document.getElementById('usuarioId').value.trim();
+    const valorTotal = document.getElementById('valorCorrida').value;
+
+    if (!usuarioId || !valorTotal) return alert('Preencha o valor da corrida.');
+
+    try {
+      const res = await fetch(`${API_URL}/carteira/registrar-corrida`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entregadorId: usuarioId, valorTotal })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      alert('Corrida confirmada e saldo atualizado!');
+      carregarCarteira();
+    } catch (err) {
+      alert('Erro: ' + err.message);
+    }
+  }
+</script>
+
+</body>
+</html>
