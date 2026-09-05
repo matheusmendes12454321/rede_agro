@@ -1,21 +1,21 @@
-import { Tabs } from 'expo-router';
+import { Stack, Tabs } from 'expo-router';
 import React from 'react';
+
 
 export default function TabLayout() {
   return (
-    <Tabs screenOptions={{ headerShown: false }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Início',
-        }}
-      />
-      <Tabs.Screen
-        name="pagamento"
-        options={{
-          title: 'Pagamento',
-        }}
-      />
-    </Tabs>
+
+    <Stack initialRouteName='(cadastro)' screenOptions={{headerShown:false}}>
+      <Stack.Screen 
+      name='(cadastro)'
+      options={{
+        headerShown: false,
+      }}/>
+          <Stack.Screen
+          name='index'
+          options={{headerShown:false}}/>
+    </Stack>
+
+    
   );
 }

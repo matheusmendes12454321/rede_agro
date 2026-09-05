@@ -7,9 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { api } from '../../../src/services/api';
-import { Input } from '../../../components/Input';
-import { Logo } from '../../../components/Logo';
+import { api } from '../../src/services/api';
+import { Input } from '../../components/Input';
+import { Logo } from '../../components/Logo';
 
 export default function CadastroEtapa2() {
   const router = useRouter();

@@ -12,7 +12,7 @@ import {
   Pressable
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { api } from '../../src/services/api';
 import { Input } from '../../components/Input';
 import { Logo } from '../../components/Logo';
@@ -42,7 +42,7 @@ export default function Login() {
       });
 
       Alert.alert('Sucesso', 'Login realizado!');
-      router.replace('/home');
+      router.replace('/(tabs)/home');
     } catch (err: any) {
       console.error('[ERRO NO LOGIN]:', err.response?.data || err.message);
       Alert.alert(
@@ -67,7 +67,7 @@ export default function Login() {
             <Pressable style={styles.btnheader}>
               <Text style={styles.textButtonHeader}>ENTRAR</Text>
             </Pressable>
-            <Pressable onPress={() => router.push('/cadastro/etapa1')} style={styles.btnheader2}>
+            <Pressable onPress={() => router.push('/(cadastro)/etapa1')} style={styles.btnheader2}>
               <Text style={styles.btnTextHeader}>CADASTRAR</Text>
             </Pressable>
           </View> 
@@ -124,7 +124,7 @@ export default function Login() {
 
             <View style={styles.divider} />
 
-            <TouchableOpacity onPress={() => router.push('/cadastro/etapa1')}>
+            <TouchableOpacity onPress={() => router.push('/(cadastro)/etapa1')}>
               <Text style={styles.link}>
                 Não tem uma conta?{'\n'}
                 <Text style={styles.linkBold}>Cadastrar-se</Text>
@@ -200,6 +200,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     width: '100%',
     flex: 1,
+    borderRadius:20,
   },
   customLabel: {
     fontSize: 16,

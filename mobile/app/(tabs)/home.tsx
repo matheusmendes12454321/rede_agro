@@ -5,6 +5,7 @@ export default function Home() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Tela Inicial (Home)</Text>
+
     </View>
   );
 }

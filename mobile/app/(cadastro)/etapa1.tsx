@@ -13,8 +13,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Input } from '../../../components/Input';
-import { Logo } from '../../../components/Logo';
+import { Input } from '../../components/Input';
+import { Logo } from '../../components/Logo';
 
 export default function CadastroEtapa1() {
   const router = useRouter();
@@ -40,7 +40,7 @@ export default function CadastroEtapa1() {
     }
 
     router.push({
-      pathname: '/cadastro/etapa2',
+      pathname: '/(cadastro)/etapa2',
       params: { dadosPessoais: JSON.stringify(form) }
     });
   };
@@ -48,7 +48,7 @@ export default function CadastroEtapa1() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ImageBackground 
-        source={require('../../../assets/images/fundo.png')} 
+        source={require('../../assets/images/fundo.png')} 
         style={styles.headerBackground}
         resizeMode="cover"
       >
