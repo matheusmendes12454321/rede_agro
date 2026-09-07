@@ -55,7 +55,7 @@ export default function CadastroEtapa1() {
         <View style={styles.topArea}>
           <Logo size={180} />
           <View style={styles.container_button}>
-            <Pressable onPress={() => router.push('/login')} style={styles.btnheader2}>
+            <Pressable onPress={() => router.push('/(cadastro)/login')} style={styles.btnheader2}>
               <Text style={styles.btnTextHeader}>ENTRAR</Text>
             </Pressable>
             <Pressable style={styles.btnheader}>

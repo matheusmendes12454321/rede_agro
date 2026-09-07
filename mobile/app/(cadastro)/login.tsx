@@ -12,7 +12,7 @@ import {
   Pressable
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Tabs, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { api } from '../../src/services/api';
 import { Input } from '../../components/Input';
 import { Logo } from '../../components/Logo';
@@ -41,13 +41,26 @@ export default function Login() {
         lembreMe 
       });
 
+      if (response.data.usuario.tipo === 'ADMIN') {
+        router.replace({
+          pathname: './admin',
+          params: { adminId: response.data.usuario.id }
+        });
+        return;
+      }
+
       Alert.alert('Sucesso', 'Login realizado!');
       router.replace('/(tabs)/home');
     } catch (err: any) {
       console.error('[ERRO NO LOGIN]:', err.response?.data || err.message);
+      const mensagem = err.response?.data?.error || err.response?.data?.message || 'Falha ao realizar login';
+      if (mensagem.includes('PENDENTE')) {
+        router.replace('./aguardando-aprovacao');
+        return;
+      }
       Alert.alert(
         'Erro', 
-        err.response?.data?.error || err.response?.data?.message || 'Falha ao realizar login'
+        mensagem
       );
     } finally {
       setLoading(false);
@@ -120,6 +133,10 @@ export default function Login() {
               <Text style={styles.btnText}>
                 {loading ? 'Carregando...' : 'Entrar'}
               </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => router.push('./esqueci-senha')}>
+              <Text style={styles.forgotPassword}>Esqueci minha senha</Text>
             </TouchableOpacity>
 
             <View style={styles.divider} />
@@ -245,6 +262,13 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 18,
+  },
+  forgotPassword: {
+    color: '#1E4720',
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 18,
+    fontSize: 15,
   },
   divider: {
     height: 1,

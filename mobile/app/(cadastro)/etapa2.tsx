@@ -32,7 +32,7 @@ export default function CadastroEtapa2() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images',
       quality: 0.7,
       allowsEditing: false,
     });
@@ -70,7 +70,7 @@ export default function CadastroEtapa2() {
       if (typeof dadosPessoais === 'string') {
         try {
           parsedDadosPessoais = JSON.parse(dadosPessoais);
-        } catch (e) {
+        } catch {
           parsedDadosPessoais = dadosPessoais;
         }
       } else {
@@ -132,8 +132,8 @@ export default function CadastroEtapa2() {
 
       console.log('[DEBUG - Resposta do Servidor]:', response.data);
 
-      Alert.alert('Sucesso!', 'Cadastro e fotos salvos com sucesso.');
-      router.replace('/login');
+      Alert.alert('Cadastro enviado!', 'Seus documentos serão analisados por um administrador.');
+      router.replace('./aguardando-aprovacao');
 
     } catch (err: any) {
       console.error('=== [DEBUG - ERRO NO ENVIO] ===');
@@ -160,7 +160,7 @@ export default function CadastroEtapa2() {
             <View style={styles.topArea}>
               <Logo />
               <View style={styles.container_button}>
-                <Pressable style={styles.btnheader2} onPress={() => router.push('/login')}>
+                <Pressable style={styles.btnheader2} onPress={() => router.push('/(cadastro)/login')}>
                   <Text style={styles.btnTextHeader}>Entrar</Text>
                 </Pressable>
                 <Pressable style={styles.btnheader}>

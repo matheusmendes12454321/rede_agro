@@ -1,10 +1,9 @@
 import React from 'react';
-import { Image, StyleSheet, View } from 'react-native';
+import { Image, View } from 'react-native';
 
 interface LogoProps {
   size?: number;
 }
-
 export function Logo({ size = 100 }: LogoProps) {
   return (
     <View>
@@ -16,16 +15,3 @@ export function Logo({ size = 100 }: LogoProps) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#ffffff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-});

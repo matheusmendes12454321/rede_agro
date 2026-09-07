@@ -9,7 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "dev": "tsx watch src/server.ts"
+    "dev": "expo start"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

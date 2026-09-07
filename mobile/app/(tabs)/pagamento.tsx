@@ -1,322 +1,98 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Image, Platform, TextInput } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Alert, Image, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 
-// Tipos suportados pelo Banco Central
 type TipoChave = 'CPF' | 'CNPJ' | 'CELULAR' | 'EMAIL' | 'EVP';
 
-export default function PagamentoScreen({ valorPadrao = 0.00 }: { valorPadrao?: number }) {
-  const [isMounted, setIsMounted] = useState<boolean>(false);
-  const [carregando, setCarregando] = useState<boolean>(false);
+function formatarCampo(tag: string, valor: string) {
+  return `${tag}${valor.length.toString().padStart(2, '0')}${valor}`;
+}
 
-  // Estados dos dados do Pix
+function calcularCrc16(payload: string) {
+  let crc = 0xffff;
+  for (let indice = 0; indice < payload.length; indice += 1) {
+    crc ^= payload.charCodeAt(indice) << 8;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 0x8000) !== 0 ? (crc << 1) ^ 0x1021 : crc << 1;
+      crc &= 0xffff;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+function normalizarChave(chave: string, tipo: TipoChave) {
+  const valor = chave.trim();
+  if (tipo === 'EMAIL' || tipo === 'EVP') return valor.toLowerCase();
+  if (tipo === 'CPF' || tipo === 'CNPJ') return valor.replace(/\D/g, '');
+  if (valor.startsWith('+')) return valor;
+  const numeros = valor.replace(/\D/g, '');
+  return numeros.startsWith('55') ? `+${numeros}` : `+55${numeros}`;
+}
+
+function gerarPayload(tipo: TipoChave, chave: string, nome: string, cidade: string, valor: string) {
+  const chavePix = normalizarChave(chave, tipo);
+  const nomeLimpo = nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().slice(0, 25) || 'RECEBEDOR';
+  const cidadeLimpa = cidade.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().slice(0, 15) || 'SAO PAULO';
+  const valorNumerico = Number(valor.replace(',', '.'));
+  if (!chavePix || !Number.isFinite(valorNumerico) || valorNumerico <= 0) return '';
+
+  const contaPix = formatarCampo('26', `${formatarCampo('00', 'BR.GOV.BCB.PIX')}${formatarCampo('01', chavePix)}`);
+  const semCrc = `${formatarCampo('00', '01')}${contaPix}${formatarCampo('52', '0000')}${formatarCampo('53', '986')}${formatarCampo('54', valorNumerico.toFixed(2))}${formatarCampo('58', 'BR')}${formatarCampo('59', nomeLimpo)}${formatarCampo('60', cidadeLimpa)}${formatarCampo('62', formatarCampo('05', '***'))}6304`;
+  return `${semCrc}${calcularCrc16(semCrc)}`;
+}
+
+export default function PagamentoScreen() {
   const [tipoChave, setTipoChave] = useState<TipoChave>('CPF');
-  const [chave, setChave] = useState<string>('coloque sua chave');
-  const [nome, setNome] = useState<string>('RECEBEDOR OFICIAL');
-  const [cidade, setCidade] = useState<string>('SAO PAULO');
-  const [valorInput, setValorInput] = useState<string>(valorPadrao.toFixed(2));
+  const [chave, setChave] = useState('');
+  const [nome, setNome] = useState('REDE AGRO');
+  const [cidade, setCidade] = useState('SAO PAULO');
+  const [valor, setValor] = useState('0,00');
+  const [copiado, setCopiado] = useState(false);
 
-  const [pixPayload, setPixPayload] = useState<string>('');
-  const [copiado, setCopiado] = useState<boolean>(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (isMounted) {
-      gerarPayloadPixValido();
-    }
-  }, [isMounted, tipoChave, chave, nome, cidade, valorInput]);
-
-  // Formatador EMV
-  const formatarCampoEMV = (tag: string, valor: string): string => {
-    const len = valor.length.toString().padStart(2, '0');
-    return `${tag}${len}${valor}`;
-  };
-
-  // Formatação direta com base no TIPO da chave (exatamente como virá do seu BD)
-  const tratarChavePix = (chaveRaw: string, tipo: TipoChave): string => {
-    const limpa = chaveRaw.trim();
-
-    switch (tipo) {
-      case 'EMAIL':
-      case 'EVP':
-        // E-mail e Chave Aleatória (EVP) devem ser estritamente em minúsculas
-        return limpa.toLowerCase();
-
-      case 'CPF':
-      case 'CNPJ':
-        // Apenas dígitos
-        return limpa.replace(/\D/g, '');
-
-      case 'CELULAR': {
-        const apenasNumeros = limpa.replace(/\D/g, '');
-        // Se a pessoa digitou com o 55 no começo (ex: 5511999999999)
-        if (apenasNumeros.startsWith('55') && (apenasNumeros.length === 12 || apenasNumeros.length === 13)) {
-          return `+${apenasNumeros}`;
-        }
-        // Se digitou com +55
-        if (limpa.startsWith('+')) {
-          return limpa;
-        }
-        // Caso padrão (ex: 11999999999) -> Adiciona o +55 obrigatorio do BACEN
-        return `+55${apenasNumeros}`;
-      }
-
-      default:
-        return limpa;
-    }
-  };
-
-  // Cálculo CRC16-CCITT
-  const calcularCRC16 = (payload: string): string => {
-    let crc = 0xFFFF;
-    for (let i = 0; i < payload.length; i++) {
-      crc ^= payload.charCodeAt(i) << 8;
-      for (let j = 0; j < 8; j++) {
-        if ((crc & 0x8000) !== 0) {
-          crc = (crc << 1) ^ 0x1021;
-        } else {
-          crc <<= 1;
-        }
-        crc &= 0xFFFF;
-      }
-    }
-    return crc.toString(16).toUpperCase().padStart(4, '0');
-  };
-
-  const gerarPayloadPixValido = () => {
-    try {
-      setCarregando(true);
-      
-      const chaveTratada = tratarChavePix(chave, tipoChave);
-
-      const nomeLimpo = nome.trim()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toUpperCase()
-        .substring(0, 25) || 'RECEBEDOR';
-
-      const cidadeLimpa = cidade.trim()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toUpperCase()
-        .substring(0, 15) || 'SAO PAULO';
-      
-      const valorNum = parseFloat(valorInput.replace(',', '.')) || 0;
-      const valStr = valorNum.toFixed(2);
-
-      // Bloco 26 (Merchant Account Information)
-      const tag00 = formatarCampoEMV('00', 'BR.GOV.BCB.PIX');
-      const tag01 = formatarCampoEMV('01', chaveTratada);
-      const bloco26 = formatarCampoEMV('26', `${tag00}${tag01}`);
-
-      // Bloco 62 (txid)
-      const tag05 = formatarCampoEMV('05', '***');
-      const bloco62 = formatarCampoEMV('62', tag05);
-
-      // Montagem do payload completo
-      const payloadSemCRC = 
-        formatarCampoEMV('00', '01') +
-        bloco26 +
-        formatarCampoEMV('52', '0000') +
-        formatarCampoEMV('53', '986') +
-        formatarCampoEMV('54', valStr) +
-        formatarCampoEMV('58', 'BR') +
-        formatarCampoEMV('59', nomeLimpo) +
-        formatarCampoEMV('60', cidadeLimpa) +
-        bloco62 +
-        '6304';
-
-      const crc = calcularCRC16(payloadSemCRC);
-      setPixPayload(`${payloadSemCRC}${crc}`);
-    } catch (e) {
-      console.error('Erro ao gerar código Pix:', e);
-    } finally {
-      setCarregando(false);
-    }
-  };
+  const payload = useMemo(() => gerarPayload(tipoChave, chave, nome, cidade, valor), [tipoChave, chave, nome, cidade, valor]);
+  const qrCodeUrl = payload ? `https://quickchart.io/qr?size=250&text=${encodeURIComponent(payload)}` : null;
 
   const copiarPix = async () => {
-    if (!pixPayload) return;
-
-    try {
-      if (Platform.OS === 'web') {
-        if (typeof navigator !== 'undefined' && navigator.clipboard) {
-          await navigator.clipboard.writeText(pixPayload);
-        }
-      } else {
-        const Clipboard = require('expo-clipboard');
-        if (Clipboard.setStringAsync) {
-          await Clipboard.setStringAsync(pixPayload);
-        }
-      }
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 3000);
-    } catch (e) {
-      Alert.alert('Info', 'Código pronto para cópia.');
+    if (!payload) {
+      Alert.alert('Dados incompletos', 'Informe uma chave Pix e um valor maior que zero.');
+      return;
     }
+    await Clipboard.setStringAsync(payload);
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 3000);
   };
 
-  if (!isMounted) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#2e7d32" />
-      </View>
-    );
-  }
-
-  const qrCodeUrl = `https://quickchart.io/qr?size=250&text=${encodeURIComponent(pixPayload)}`;
-
-  const tiposDisponiveis: TipoChave[] = ['CPF', 'CNPJ', 'CELULAR', 'EMAIL', 'EVP'];
-
   return (
-    <View style={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <Text style={styles.titulo}>Pagamento via Pix</Text>
-
-      {/* Seletor do Tipo de Chave */}
-      <View style={styles.fieldContainer}>
-        <Text style={styles.label}>Tipo de Chave:</Text>
-        <View style={styles.tiposContainer}>
-          {tiposDisponiveis.map((tipo) => (
-            <TouchableOpacity
-              key={tipo}
-              style={[styles.tipoButton, tipoChave === tipo && styles.tipoButtonSelected]}
-              onPress={() => setTipoChave(tipo)}
-            >
-              <Text style={[styles.tipoButtonText, tipoChave === tipo && styles.tipoButtonTextSelected]}>
-                {tipo}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+      <Text style={styles.label}>Tipo de chave</Text>
+      <View style={styles.tiposContainer}>
+        {(['CPF', 'CNPJ', 'CELULAR', 'EMAIL', 'EVP'] as TipoChave[]).map((tipo) => (
+          <TouchableOpacity key={tipo} style={[styles.tipoButton, tipo === tipoChave && styles.tipoAtivo]} onPress={() => setTipoChave(tipo)}>
+            <Text style={[styles.tipoTexto, tipo === tipoChave && styles.tipoTextoAtivo]}>{tipo}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
-
-      <View style={styles.fieldContainer}>
-        <Text style={styles.label}>Chave Pix:</Text>
-        <TextInput
-          style={styles.input}
-          value={chave}
-          onChangeText={setChave}
-          placeholder={`Digite o ${tipoChave}`}
-          autoCapitalize="none"
-        />
-      </View>
-
-      <View style={styles.fieldContainer}>
-        <Text style={styles.label}>Valor (R$):</Text>
-        <TextInput
-          style={styles.input}
-          value={valorInput}
-          onChangeText={setValorInput}
-          keyboardType="numeric"
-        />
-      </View>
-
-      {carregando || !pixPayload ? (
-        <ActivityIndicator size="large" color="#2e7d32" style={{ marginVertical: 20 }} />
-      ) : (
-        <View style={styles.qrContainer}>
-          <Image source={{ uri: qrCodeUrl }} style={styles.qrImage} />
-        </View>
-      )}
-
+      <Campo label="Chave Pix" value={chave} onChangeText={setChave} placeholder="Digite a chave Pix" />
+      <Campo label="Nome do recebedor" value={nome} onChangeText={setNome} placeholder="Nome" />
+      <Campo label="Cidade" value={cidade} onChangeText={setCidade} placeholder="Cidade" />
+      <Campo label="Valor (R$)" value={valor} onChangeText={setValor} placeholder="0,00" keyboardType="decimal-pad" />
+      {qrCodeUrl && <View style={styles.qrContainer}><Image source={{ uri: qrCodeUrl }} style={styles.qrImage} /></View>}
       <TouchableOpacity style={styles.btnCopiar} onPress={copiarPix}>
-        <Text style={styles.btnText}>
-          {copiado ? '✓ Copiado com sucesso!' : 'Copiar Pix Copia e Cola'}
-        </Text>
+        <Text style={styles.btnTexto}>{copiado ? '✓ Copiado com sucesso!' : 'Copiar Pix copia e cola'}</Text>
       </TouchableOpacity>
-    </View>
+      {Platform.OS === 'web' && payload && <Text selectable style={styles.payload}>{payload}</Text>}
+    </ScrollView>
   );
 }
 
+function Campo({ label, ...props }: { label: string } & React.ComponentProps<typeof TextInput>) {
+  return <View style={styles.campo}><Text style={styles.label}>{label}</Text><TextInput style={styles.input} {...props} /></View>;
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 24,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  titulo: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#2e7d32',
-    marginBottom: 16,
-  },
-  fieldContainer: {
-    width: '100%',
-    marginBottom: 10,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  tiposContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 6,
-  },
-  tipoButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    backgroundColor: '#f5f5f5',
-  },
-  tipoButtonSelected: {
-    backgroundColor: '#2e7d32',
-    borderColor: '#2e7d32',
-  },
-  tipoButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#333',
-  },
-  tipoButtonTextSelected: {
-    color: '#fff',
-  },
-  input: {
-    width: '100%',
-    height: 44,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    fontSize: 16,
-    backgroundColor: '#fafafa',
-  },
-  qrContainer: {
-    padding: 12,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    marginVertical: 12,
-  },
-  qrImage: {
-    width: 220,
-    height: 220,
-  },
-  btnCopiar: {
-    width: '100%',
-    backgroundColor: '#2e7d32',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  btnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  container: { flexGrow: 1, padding: 24, backgroundColor: '#fff' }, titulo: { fontSize: 24, fontWeight: 'bold', color: '#1E4720', marginBottom: 22 },
+  label: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 6 }, campo: { marginTop: 14 }, input: { height: 46, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, paddingHorizontal: 12, fontSize: 16 },
+  tiposContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, tipoButton: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 7, borderWidth: 1, borderColor: '#ccc' }, tipoAtivo: { backgroundColor: '#1E4720', borderColor: '#1E4720' }, tipoTexto: { color: '#333', fontWeight: '600' }, tipoTextoAtivo: { color: '#fff' },
+  qrContainer: { alignItems: 'center', marginVertical: 24 }, qrImage: { width: 230, height: 230 }, btnCopiar: { backgroundColor: '#23A24D', paddingVertical: 14, borderRadius: 9, alignItems: 'center', marginTop: 24 }, btnTexto: { color: '#fff', fontSize: 16, fontWeight: 'bold' }, payload: { marginTop: 18, color: '#555' },
 });
