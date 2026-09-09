@@ -1,36 +1,52 @@
 import type { RequestHandler } from 'express';
 import { supabase } from '../config/supabase.js';
+import { exigirUsuarioDaSessao } from '../middlewares/auth.js';
+
+function saldoDisponivel(transacoes: Array<{ tipo?: string; valor?: number | string; status?: string }>) {
+  return transacoes.reduce((saldo, transacao) => {
+    if (transacao.status !== 'CONCLUIDO' && transacao.status !== 'PENDENTE') return saldo;
+    const valor = Number(transacao.valor ?? 0);
+    return transacao.tipo === 'DEBITO' ? saldo - valor : saldo + valor;
+  }, 0);
+}
 
 export const salvarChavePix: RequestHandler = async (req, res) => {
   try {
-    const { usuarioId, chavePix, tipoChave } = req.body;
-    if (!usuarioId || !chavePix || !tipoChave) {
-      res.status(400).json({ error: 'Campos usuarioId, chavePix e tipoChave são obrigatórios.' });
-      return;
-    }
-    const { error } = await supabase.from('Usuario').update({
-      chave_pix: String(chavePix).trim(),
-      tipo_chave_pix: String(tipoChave).toUpperCase().trim(),
-    }).eq('id', usuarioId);
+    const { chavePix, tipoChave } = req.body;
+    if (!chavePix || !tipoChave) { res.status(400).json({ error: 'Informe chave Pix e tipo da chave.' }); return; }
+    const { error } = await supabase.from('Usuario').update({ chave_pix: String(chavePix).trim(), tipo_chave_pix: String(tipoChave).toUpperCase().trim() }).eq('id', req.auth!.usuarioId);
     if (error) throw error;
-    res.status(200).json({ message: 'Chave Pix cadastrada com sucesso!' });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+    res.json({ message: 'Chave Pix cadastrada com sucesso!' });
+  } catch (error: any) { res.status(500).json({ error: error.message || 'Não foi possível salvar a chave Pix.' }); }
 };
 
-export const obterPixParaPagamento: RequestHandler = async (req, res) => {
+export const consultarCarteira: RequestHandler = async (req, res) => {
   try {
-    const { data: usuario, error } = await supabase.from('Usuario')
-      .select('id, nome, chave_pix, tipo_chave_pix').eq('id', req.params.usuarioId).single();
-    if (error || !usuario?.chave_pix) {
-      res.status(400).json({ error: 'Chave Pix não encontrada para este usuário.' });
-      return;
-    }
-    res.status(200).json({ nomeRecebedor: usuario.nome, chavePix: usuario.chave_pix, tipoChavePix: usuario.tipo_chave_pix });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+    const usuarioId = req.params.usuarioId;
+    if (!exigirUsuarioDaSessao(usuarioId, req.auth)) { res.status(403).json({ error: 'Você não pode consultar a carteira de outro usuário.' }); return; }
+    const [{ data: usuario, error: usuarioError }, { data: transacoes, error: transacoesError }] = await Promise.all([
+      supabase.from('Usuario').select('chave_pix, tipo_chave_pix').eq('id', usuarioId).single(),
+      supabase.from('Transacao').select('*').eq('usuario_id', usuarioId).order('criado_em', { ascending: false }),
+    ]);
+    if (usuarioError || transacoesError) throw usuarioError || transacoesError;
+    const extrato = transacoes ?? [];
+    res.json({ usuarioId, saldo: saldoDisponivel(extrato).toFixed(2), chavePix: usuario?.chave_pix ?? null, tipoChavePix: usuario?.tipo_chave_pix ?? null, extrato });
+  } catch (error: any) { res.status(500).json({ error: error.message || 'Não foi possível consultar a carteira.' }); }
+};
+
+export const solicitarSaque: RequestHandler = async (req, res) => {
+  try {
+    const valor = Number(req.body.valor);
+    if (!Number.isFinite(valor) || valor <= 0) { res.status(400).json({ error: 'Informe um valor de saque válido.' }); return; }
+    const usuarioId = req.auth!.usuarioId;
+    const { data: transacoes, error } = await supabase.from('Transacao').select('tipo, valor, status').eq('usuario_id', usuarioId);
+    if (error) throw error;
+    const saldo = saldoDisponivel(transacoes ?? []);
+    if (valor > saldo) { res.status(400).json({ error: 'Saldo insuficiente para solicitar este saque.', saldoDisponivel: saldo.toFixed(2) }); return; }
+    const { data: saque, error: saqueError } = await supabase.from('Transacao').insert({ usuario_id: usuarioId, tipo: 'DEBITO', valor, valor_total: valor, taxa_plataforma: 0, status: 'PENDENTE', gateway_txid: `SAQUE_${Date.now()}` }).select().single();
+    if (saqueError) throw saqueError;
+    res.status(201).json({ message: 'Solicitação de saque registrada.', saque, saldo: (saldo - valor).toFixed(2) });
+  } catch (error: any) { res.status(500).json({ error: error.message || 'Não foi possível solicitar o saque.' }); }
 };
 
 export const registrarCorrida: RequestHandler = async (req, res) => {
@@ -47,24 +63,9 @@ export const registrarCorrida: RequestHandler = async (req, res) => {
       valor: Number((valor - taxaPlataforma).toFixed(2)), taxa_plataforma: taxaPlataforma,
       valor_total: valor, status: 'CONCLUIDO', gateway_txid: `PIX_DIRETO_${Date.now()}`,
     }]).select().single();
+
     if (error) throw error;
     res.status(200).json({ message: 'Corrida registrada com sucesso!', transacao });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-export const consultarCarteira: RequestHandler = async (req, res) => {
-  try {
-    const { usuarioId } = req.params;
-    const [{ data: usuario }, { data: transacoes, error }] = await Promise.all([
-      supabase.from('Usuario').select('chave_pix, tipo_chave_pix').eq('id', usuarioId).single(),
-      supabase.from('Transacao').select('*').eq('usuario_id', usuarioId),
-    ]);
-    if (error) throw error;
-    const extrato = (transacoes ?? []).sort((a, b) => new Date(b.criado_em || b.criada_em || 0).getTime() - new Date(a.criado_em || a.criada_em || 0).getTime());
-    const saldo = extrato.filter((item) => item.status === 'CONCLUIDO').reduce((total, item) => total + Number(item.valor), 0);
-    res.status(200).json({ usuarioId, saldo: saldo.toFixed(2), chavePix: usuario?.chave_pix ?? null, tipoChavePix: usuario?.tipo_chave_pix ?? null, extrato });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

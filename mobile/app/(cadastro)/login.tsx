@@ -16,9 +16,11 @@ import { useRouter } from 'expo-router';
 import { api } from '../../src/services/api';
 import { Input } from '../../components/Input';
 import { Logo } from '../../components/Logo';
+import { useAuth } from '../../src/contexts/auth-context';
 
 export default function Login() {
   const router = useRouter();
+  const { entrar } = useAuth();
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [lembreMe, setLembreMe] = useState(false);
@@ -49,6 +51,7 @@ export default function Login() {
         return;
       }
 
+      await entrar(response.data.usuario, response.data.token);
       Alert.alert('Sucesso', 'Login realizado!');
       router.replace('/(tabs)/home');
     } catch (err: any) {
