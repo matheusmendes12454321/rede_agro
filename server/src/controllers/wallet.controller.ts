@@ -14,8 +14,9 @@ export const salvarChavePix: RequestHandler = async (req, res) => {
   try {
     const { chavePix, tipoChave } = req.body;
     if (!chavePix || !tipoChave) { res.status(400).json({ error: 'Informe chave Pix e tipo da chave.' }); return; }
-    const { error } = await supabase.from('Usuario').update({ chave_pix: String(chavePix).trim(), tipo_chave_pix: String(tipoChave).toUpperCase().trim() }).eq('id', req.auth!.usuarioId);
+    const { data, error } = await supabase.from('Usuario').update({ chave_pix: String(chavePix).trim(), tipo_chave_pix: String(tipoChave).toUpperCase().trim() }).eq('id', req.auth!.usuarioId).select('id').maybeSingle();
     if (error) throw error;
+    if (!data) { res.status(404).json({ error: 'Seu perfil não foi encontrado. Saia e entre na conta novamente.' }); return; }
     res.json({ message: 'Chave Pix cadastrada com sucesso!' });
   } catch (error: any) { res.status(500).json({ error: error.message || 'Não foi possível salvar a chave Pix.' }); }
 };
@@ -53,9 +54,17 @@ export const registrarCorrida: RequestHandler = async (req, res) => {
   try {
     const { entregadorId, entregaId, valorTotal } = req.body;
     const valor = Number(valorTotal);
-    if (!entregadorId || !Number.isFinite(valor) || valor <= 0) {
+    if (!entregadorId || entregadorId !== req.auth!.usuarioId || !Number.isFinite(valor) || valor <= 0) {
       res.status(400).json({ error: 'Informe entregadorId e um valorTotal válido.' });
       return;
+    }
+    if (entregaId) {
+      const { data: existente, error: existenteError } = await supabase.from('Transacao').select('id').eq('entrega_id', entregaId).maybeSingle();
+      if (existenteError) throw existenteError;
+      if (existente) { res.status(200).json({ message: 'Ganho já registrado para esta entrega.', transacao: existente }); return; }
+      const { data: entrega, error: entregaError } = await supabase.from('Entrega').select('pagamento_status').eq('id', entregaId).eq('entregador_id', entregadorId).maybeSingle();
+      if (entregaError) throw entregaError;
+      if (!entrega || entrega.pagamento_status !== 'APROVADO') { res.status(400).json({ error: 'Confirme o pagamento antes de registrar o ganho.' }); return; }
     }
     const taxaPlataforma = Number((valor * 0.15).toFixed(2));
     const { data: transacao, error } = await supabase.from('Transacao').insert([{

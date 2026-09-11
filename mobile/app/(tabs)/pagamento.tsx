@@ -1,98 +1,34 @@
-import React, { useMemo, useState } from 'react';
-import { Alert, Image, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import QRCode from 'react-native-qrcode-svg';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { api } from '../../src/services/api';
 
-type TipoChave = 'CPF' | 'CNPJ' | 'CELULAR' | 'EMAIL' | 'EVP';
-
-function formatarCampo(tag: string, valor: string) {
-  return `${tag}${valor.length.toString().padStart(2, '0')}${valor}`;
-}
-
-function calcularCrc16(payload: string) {
-  let crc = 0xffff;
-  for (let indice = 0; indice < payload.length; indice += 1) {
-    crc ^= payload.charCodeAt(indice) << 8;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc & 0x8000) !== 0 ? (crc << 1) ^ 0x1021 : crc << 1;
-      crc &= 0xffff;
-    }
-  }
-  return crc.toString(16).toUpperCase().padStart(4, '0');
-}
-
-function normalizarChave(chave: string, tipo: TipoChave) {
-  const valor = chave.trim();
-  if (tipo === 'EMAIL' || tipo === 'EVP') return valor.toLowerCase();
-  if (tipo === 'CPF' || tipo === 'CNPJ') return valor.replace(/\D/g, '');
-  if (valor.startsWith('+')) return valor;
-  const numeros = valor.replace(/\D/g, '');
-  return numeros.startsWith('55') ? `+${numeros}` : `+55${numeros}`;
-}
-
-function gerarPayload(tipo: TipoChave, chave: string, nome: string, cidade: string, valor: string) {
-  const chavePix = normalizarChave(chave, tipo);
-  const nomeLimpo = nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().slice(0, 25) || 'RECEBEDOR';
-  const cidadeLimpa = cidade.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().slice(0, 15) || 'SAO PAULO';
-  const valorNumerico = Number(valor.replace(',', '.'));
-  if (!chavePix || !Number.isFinite(valorNumerico) || valorNumerico <= 0) return '';
-
-  const contaPix = formatarCampo('26', `${formatarCampo('00', 'BR.GOV.BCB.PIX')}${formatarCampo('01', chavePix)}`);
-  const semCrc = `${formatarCampo('00', '01')}${contaPix}${formatarCampo('52', '0000')}${formatarCampo('53', '986')}${formatarCampo('54', valorNumerico.toFixed(2))}${formatarCampo('58', 'BR')}${formatarCampo('59', nomeLimpo)}${formatarCampo('60', cidadeLimpa)}${formatarCampo('62', formatarCampo('05', '***'))}6304`;
-  return `${semCrc}${calcularCrc16(semCrc)}`;
-}
+type Pagamento = { valor: number; metodo_pagamento: 'PIX' | 'CARTAO' | 'DINHEIRO'; pagamento_status: string; pix_payload?: string; pix_expira_em?: string };
+const moeda = (valor: number) => `R$ ${Number(valor || 0).toFixed(2).replace('.', ',')}`;
 
 export default function PagamentoScreen() {
-  const [tipoChave, setTipoChave] = useState<TipoChave>('CPF');
-  const [chave, setChave] = useState('');
-  const [nome, setNome] = useState('REDE AGRO');
-  const [cidade, setCidade] = useState('SAO PAULO');
-  const [valor, setValor] = useState('0,00');
-  const [copiado, setCopiado] = useState(false);
-
-  const payload = useMemo(() => gerarPayload(tipoChave, chave, nome, cidade, valor), [tipoChave, chave, nome, cidade, valor]);
-  const qrCodeUrl = payload ? `https://quickchart.io/qr?size=250&text=${encodeURIComponent(payload)}` : null;
-
-  const copiarPix = async () => {
-    if (!payload) {
-      Alert.alert('Dados incompletos', 'Informe uma chave Pix e um valor maior que zero.');
-      return;
-    }
-    await Clipboard.setStringAsync(payload);
-    setCopiado(true);
-    setTimeout(() => setCopiado(false), 3000);
-  };
-
-  return (
-    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-      <Text style={styles.titulo}>Pagamento via Pix</Text>
-      <Text style={styles.label}>Tipo de chave</Text>
-      <View style={styles.tiposContainer}>
-        {(['CPF', 'CNPJ', 'CELULAR', 'EMAIL', 'EVP'] as TipoChave[]).map((tipo) => (
-          <TouchableOpacity key={tipo} style={[styles.tipoButton, tipo === tipoChave && styles.tipoAtivo]} onPress={() => setTipoChave(tipo)}>
-            <Text style={[styles.tipoTexto, tipo === tipoChave && styles.tipoTextoAtivo]}>{tipo}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <Campo label="Chave Pix" value={chave} onChangeText={setChave} placeholder="Digite a chave Pix" />
-      <Campo label="Nome do recebedor" value={nome} onChangeText={setNome} placeholder="Nome" />
-      <Campo label="Cidade" value={cidade} onChangeText={setCidade} placeholder="Cidade" />
-      <Campo label="Valor (R$)" value={valor} onChangeText={setValor} placeholder="0,00" keyboardType="decimal-pad" />
-      {qrCodeUrl && <View style={styles.qrContainer}><Image source={{ uri: qrCodeUrl }} style={styles.qrImage} /></View>}
-      <TouchableOpacity style={styles.btnCopiar} onPress={copiarPix}>
-        <Text style={styles.btnTexto}>{copiado ? '✓ Copiado com sucesso!' : 'Copiar Pix copia e cola'}</Text>
-      </TouchableOpacity>
-      {Platform.OS === 'web' && payload && <Text selectable style={styles.payload}>{payload}</Text>}
-    </ScrollView>
-  );
+  const { entregaId } = useLocalSearchParams<{ entregaId: string }>();
+  const router = useRouter(); const [pagamento, setPagamento] = useState<Pagamento | null>(null);
+  const [valorRecebido, setValorRecebido] = useState(''); const [carregando, setCarregando] = useState(true); const [enviando, setEnviando] = useState(false); const [agora, setAgora] = useState(Date.now());
+  const carregar = useCallback(async () => { if (!entregaId) return; try { setCarregando(true); const resposta = await api.get(`/entregas/${entregaId}/pagamento`); setPagamento(resposta.data.pagamento); } catch (erro: any) { Alert.alert('Pagamento indisponível', erro.response?.data?.error || 'Não foi possível carregar o pedido.'); } finally { setCarregando(false); } }, [entregaId]);
+  useEffect(() => { void carregar(); }, [carregar]);
+  useEffect(() => { const timer = setInterval(() => setAgora(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  useEffect(() => { if (pagamento?.pagamento_status !== 'AGUARDANDO_PIX') return; const timer = setInterval(() => { void carregar(); }, 8000); return () => clearInterval(timer); }, [carregar, pagamento?.pagamento_status]);
+  const troco = useMemo(() => Math.max(0, Number(valorRecebido.replace(',', '.')) - Number(pagamento?.valor || 0)), [valorRecebido, pagamento?.valor]);
+  const restante = useMemo(() => Math.max(0, new Date(pagamento?.pix_expira_em || 0).getTime() - agora), [pagamento?.pix_expira_em, agora]);
+  const tempo = `${Math.floor(restante / 60000).toString().padStart(2, '0')}:${Math.floor((restante % 60000) / 1000).toString().padStart(2, '0')}`;
+  const executar = async (rota: string, corpo: object = {}) => { try { setEnviando(true); const resposta = await api.post(`/entregas/${entregaId}/pagamento/${rota}`, corpo); setPagamento(resposta.data.pagamento); Alert.alert('Pagamento aprovado', 'O pedido já pode ser concluído.', [{ text: 'Voltar para entrega', onPress: () => router.back() }]); } catch (erro: any) { Alert.alert('Não foi possível confirmar', erro.response?.data?.error || 'Tente novamente.'); } finally { setEnviando(false); } };
+  const gerarPix = async () => { try { setEnviando(true); const resposta = await api.post(`/entregas/${entregaId}/pagamento/pix`); setPagamento(resposta.data.pagamento); } catch (erro: any) { Alert.alert('Não foi possível gerar Pix', erro.response?.data?.error || 'Cadastre uma chave Pix no perfil.'); } finally { setEnviando(false); } };
+  if (carregando) return <SafeAreaView style={styles.safe}><ActivityIndicator style={styles.loader} size="large" color="#23A24D" /></SafeAreaView>;
+  if (!pagamento) return <SafeAreaView style={styles.safe} />;
+  const aprovado = pagamento.pagamento_status === 'APROVADO'; const metodo = pagamento.metodo_pagamento;
+  return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.content}><View style={styles.header}><TouchableOpacity onPress={() => router.back()}><MaterialCommunityIcons name="arrow-left" size={26} color="#fff" /></TouchableOpacity><Text style={styles.headerTitle}>Receber pagamento</Text><View style={{ width: 26 }} /></View><View style={styles.hero}><Text style={styles.labelLight}>Valor do pedido</Text><Text style={styles.valor}>{moeda(pagamento.valor)}</Text><View style={styles.method}><MaterialCommunityIcons name={metodo === 'PIX' ? 'qrcode' : metodo === 'CARTAO' ? 'credit-card-outline' : 'cash'} color="#1E4720" size={21} /><Text style={styles.methodText}>{metodo === 'CARTAO' ? 'Cartão na entrega' : metodo === 'DINHEIRO' ? 'Dinheiro na entrega' : 'Pix na entrega'}</Text></View></View>{aprovado ? <Sucesso voltar={() => router.back()} /> : metodo === 'CARTAO' ? <Cartao enviando={enviando} aprovar={() => executar('cartao', { aprovado: true })} /> : metodo === 'DINHEIRO' ? <Dinheiro valor={valorRecebido} setValor={setValorRecebido} troco={troco} enviando={enviando} confirmar={() => executar('dinheiro', { valorRecebido: Number(valorRecebido.replace(',', '.')), confirmado: true })} /> : <Pix pagamento={pagamento} tempo={tempo} expirado={restante <= 0} enviando={enviando} gerar={gerarPix} confirmar={() => executar('pix/confirmar-teste')} />}</ScrollView></SafeAreaView>;
 }
-
-function Campo({ label, ...props }: { label: string } & React.ComponentProps<typeof TextInput>) {
-  return <View style={styles.campo}><Text style={styles.label}>{label}</Text><TextInput style={styles.input} {...props} /></View>;
-}
-
-const styles = StyleSheet.create({
-  container: { flexGrow: 1, padding: 24, backgroundColor: '#fff' }, titulo: { fontSize: 24, fontWeight: 'bold', color: '#1E4720', marginBottom: 22 },
-  label: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 6 }, campo: { marginTop: 14 }, input: { height: 46, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, paddingHorizontal: 12, fontSize: 16 },
-  tiposContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, tipoButton: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 7, borderWidth: 1, borderColor: '#ccc' }, tipoAtivo: { backgroundColor: '#1E4720', borderColor: '#1E4720' }, tipoTexto: { color: '#333', fontWeight: '600' }, tipoTextoAtivo: { color: '#fff' },
-  qrContainer: { alignItems: 'center', marginVertical: 24 }, qrImage: { width: 230, height: 230 }, btnCopiar: { backgroundColor: '#23A24D', paddingVertical: 14, borderRadius: 9, alignItems: 'center', marginTop: 24 }, btnTexto: { color: '#fff', fontSize: 16, fontWeight: 'bold' }, payload: { marginTop: 18, color: '#555' },
-});
+function Sucesso({ voltar }: { voltar: () => void }) { return <View style={styles.success}><MaterialCommunityIcons name="check-circle" size={48} color="#23A24D" /><Text style={styles.successTitle}>Pagamento aprovado</Text><Text style={styles.successText}>Você já pode finalizar a entrega.</Text><TouchableOpacity style={styles.primary} onPress={voltar}><Text style={styles.primaryText}>VOLTAR PARA A ENTREGA</Text></TouchableOpacity></View>; }
+function Cartao({ aprovar, enviando }: { aprovar: () => void; enviando: boolean }) { return <View style={styles.card}><View style={styles.iconCircle}><MaterialCommunityIcons name="credit-card-outline" size={37} color="#1E4720" /></View><Text style={styles.title}>Pagamento no cartão</Text><Text style={styles.sub}>Passe ou aproxime o cartão na maquininha. Depois, confirme se a transação foi aprovada.</Text><TouchableOpacity disabled={enviando} style={[styles.primary, enviando && styles.disabled]} onPress={aprovar}><Text style={styles.primaryText}>{enviando ? 'CONFIRMANDO...' : 'PAGAMENTO APROVADO'}</Text></TouchableOpacity><Text style={styles.note}>Só confirme após ver a aprovação na maquininha.</Text></View>; }
+function Dinheiro({ valor, setValor, troco, enviando, confirmar }: { valor: string; setValor: (v: string) => void; troco: number; enviando: boolean; confirmar: () => void }) { return <View style={styles.card}><Text style={styles.title}>Recebimento em dinheiro</Text><Text style={styles.sub}>Confira o valor entregue pelo cliente e informe abaixo.</Text><Text style={styles.inputLabel}>Cliente pagou com</Text><TextInput value={valor} onChangeText={setValor} keyboardType="decimal-pad" placeholder="R$ 0,00" style={styles.input} /><View style={styles.change}><Text style={styles.changeLabel}>Troco a devolver</Text><Text style={styles.changeValue}>{moeda(troco)}</Text></View><TouchableOpacity disabled={enviando || !valor} style={[styles.primary, (!valor || enviando) && styles.disabled]} onPress={confirmar}><Text style={styles.primaryText}>{enviando ? 'CONFIRMANDO...' : 'CONFIRMAR RECEBIMENTO'}</Text></TouchableOpacity></View>; }
+function Pix({ pagamento, tempo, expirado, enviando, gerar, confirmar }: { pagamento: Pagamento; tempo: string; expirado: boolean; enviando: boolean; gerar: () => void; confirmar: () => void }) { if (!pagamento.pix_payload || pagamento.pagamento_status === 'EXPIRADO') return <View style={styles.card}><View style={styles.iconCircle}><MaterialCommunityIcons name="qrcode" size={37} color="#1E4720" /></View><Text style={styles.title}>{pagamento.pagamento_status === 'EXPIRADO' ? 'Pix expirado' : 'Gerar QR Code Pix'}</Text><Text style={styles.sub}>O código é único para este pedido e fica disponível por 10 minutos.</Text><TouchableOpacity disabled={enviando} style={[styles.primary, enviando && styles.disabled]} onPress={gerar}><Text style={styles.primaryText}>{enviando ? 'GERANDO...' : 'GERAR PIX'}</Text></TouchableOpacity></View>; return <View style={styles.card}><Text style={styles.title}>Aponte a câmera para pagar</Text><Text style={styles.sub}>O valor já está preenchido no QR Code.</Text><View style={styles.timer}><MaterialCommunityIcons name="timer-outline" size={18} color={expirado ? '#C0392B' : '#1E4720'} /><Text style={[styles.timerText, expirado && { color: '#C0392B' }]}>Expira em {tempo}</Text></View><View style={styles.qr}><QRCode value={pagamento.pix_payload} size={208} color="#152817" backgroundColor="#fff" /></View><Text style={styles.wait}><ActivityIndicator color="#23A24D" /> Aguardando confirmação do Pix</Text><TouchableOpacity disabled={enviando || expirado} style={[styles.outline, (enviando || expirado) && styles.disabled]} onPress={confirmar}><Text style={styles.outlineText}>SIMULAR PIX RECEBIDO</Text></TouchableOpacity><Text style={styles.note}>Em produção, a aprovação é automática pelo webhook do seu banco ou PSP.</Text></View>; }
+const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: '#F5F5F5' }, loader: { marginTop: 45 }, content: { paddingBottom: 30 }, header: { backgroundColor: '#1E4720', padding: 18, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, headerTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' }, hero: { backgroundColor: '#1E4720', padding: 24, alignItems: 'center', borderBottomLeftRadius: 26, borderBottomRightRadius: 26 }, labelLight: { color: '#CBE5CB', fontSize: 13 }, valor: { color: '#fff', fontSize: 35, fontWeight: 'bold', marginTop: 5 }, method: { marginTop: 16, backgroundColor: '#fff', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 7 }, methodText: { color: '#1E4720', fontWeight: '700', fontSize: 13 }, card: { backgroundColor: '#fff', borderRadius: 16, padding: 21, margin: 16, alignItems: 'center' }, iconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#E4F2E5', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }, title: { color: '#1E4720', fontSize: 20, fontWeight: 'bold', textAlign: 'center' }, sub: { color: '#687068', textAlign: 'center', lineHeight: 20, marginTop: 8 }, primary: { width: '100%', backgroundColor: '#23A24D', borderRadius: 10, padding: 16, alignItems: 'center', marginTop: 23 }, primaryText: { color: '#fff', fontWeight: 'bold', fontSize: 13 }, note: { color: '#788078', fontSize: 12, lineHeight: 17, textAlign: 'center', marginTop: 13 }, inputLabel: { alignSelf: 'flex-start', color: '#1E4720', fontWeight: 'bold', marginTop: 22, marginBottom: 7 }, input: { width: '100%', borderWidth: 1, borderColor: '#B4C5B4', height: 50, paddingHorizontal: 13, borderRadius: 9, fontSize: 18 }, change: { width: '100%', marginTop: 14, padding: 14, backgroundColor: '#EAF5EB', borderRadius: 10, flexDirection: 'row', justifyContent: 'space-between' }, changeLabel: { color: '#345235' }, changeValue: { color: '#1E4720', fontWeight: 'bold', fontSize: 17 }, disabled: { opacity: .55 }, success: { backgroundColor: '#fff', margin: 16, borderRadius: 16, padding: 26, alignItems: 'center' }, successTitle: { color: '#1E4720', fontWeight: 'bold', fontSize: 21, marginTop: 12 }, successText: { color: '#687068', marginTop: 7 }, timer: { backgroundColor: '#F2F7F2', padding: 9, borderRadius: 8, marginTop: 15, flexDirection: 'row', gap: 6, alignItems: 'center' }, timerText: { color: '#1E4720', fontWeight: 'bold' }, qr: { borderWidth: 1, borderColor: '#E1E9E1', padding: 14, borderRadius: 12, marginTop: 18 }, wait: { flexDirection: 'row', gap: 8, color: '#4B624D', marginTop: 17, alignItems: 'center' }, outline: { width: '100%', borderWidth: 1, borderColor: '#1E4720', borderRadius: 10, padding: 14, alignItems: 'center', marginTop: 17 }, outlineText: { color: '#1E4720', fontWeight: 'bold', fontSize: 12 } });

@@ -61,9 +61,9 @@ export const criarEntregaTeste: RequestHandler = async (req, res) => {
     const { indice } = req.body;
     
     const pedidosSimulados = [
-      { loja: 'Mercado Bom Preço', endereco: 'Av. Central, 120', itens: '2 itens • Mercado', clienteNome: 'Mariana Souza', clienteTelefone: '33999576713', latitude: -16.17953, longitude: -40.69489, valor: 12.50 },
-      { loja: 'Farmácia Vida', endereco: 'Rua do Comércio, 42', itens: '1 item • Farmácia', clienteNome: 'Rafael Lima', clienteTelefone: '33999705058', latitude: -16.17953, longitude: -40.69489, valor: 9.00 },
-      { loja: 'Restaurante da Praça', endereco: 'Praça Brasil, 15', itens: '3 itens • Alimentação', clienteNome: 'Camila Alves', clienteTelefone: '33987220462', latitude: -16.17953, longitude: -40.69489, valor: 15.75 }
+      { loja: 'Mercado Bom Preço', endereco: 'Av. Central, 120', itens: '2 itens • Mercado', clienteNome: 'Mariana Souza', clienteTelefone: '33999576713', latitude: -16.17953, longitude: -40.69489, valor: 0.01, metodo: 'PIX' },
+      { loja: 'Farmácia Vida', endereco: 'Rua do Comércio, 42', itens: '1 item • Farmácia', clienteNome: 'Rafael Lima', clienteTelefone: '33999705058', latitude: -16.17953, longitude: -40.69489, valor: 9.00, metodo: 'CARTAO' },
+      { loja: 'Restaurante da Praça', endereco: 'Praça Brasil, 15', itens: '3 itens • Alimentação', clienteNome: 'Camila Alves', clienteTelefone: '33987220462', latitude: -16.17953, longitude: -40.69489, valor: 15.75, metodo: 'DINHEIRO' }
     ];
 
     const pedidoSelecionado = pedidosSimulados[indice];
@@ -88,6 +88,7 @@ export const criarEntregaTeste: RequestHandler = async (req, res) => {
         lng_entrega: -40.7439,
         itens: pedidoSelecionado.itens,
         valor: pedidoSelecionado.valor,
+        metodo_pagamento: pedidoSelecionado.metodo,
         entregador_id: req.auth!.usuarioId,
         status: 'ACEITO'
       }
@@ -181,6 +182,10 @@ export const confirmarCodigo: RequestHandler = async (req, res) => {
       res.status(400).json({ error: 'Entrega não está pronta para confirmação.' }); 
       return; 
     }
+    if (entrega.pagamento_status !== 'APROVADO') {
+      res.status(400).json({ error: 'Confirme o pagamento antes de concluir a entrega.' });
+      return;
+    }
     if (!entrega.codigo_confirmacao || String(req.body.codigo ?? '').trim() !== entrega.codigo_confirmacao) { 
       res.status(400).json({ error: 'Código de confirmação inválido.' }); 
       return; 
@@ -205,6 +210,9 @@ export const confirmarFoto = async (req: any, res: any) => {
     const entrega = await minhaEntrega(String(entregaId), req.auth!.usuarioId);
     if (!entrega || entrega.status !== 'A_CAMINHO_ENTREGA') {
       return res.status(400).json({ error: 'Entrega não está pronta para confirmação.' });
+    }
+    if (entrega.pagamento_status !== 'APROVADO') {
+      return res.status(400).json({ error: 'Confirme o pagamento antes de concluir a entrega.' });
     }
 
     const { data, error } = await supabase

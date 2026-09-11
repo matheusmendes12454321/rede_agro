@@ -110,6 +110,12 @@ export default function EntregaDetalhes() {
           return;
         }
 
+        const pagamento = await api.get(`/entregas/${params.entregaId}/pagamento`);
+        if (pagamento.data.pagamento?.pagamento_status !== 'APROVADO') {
+          router.push(`/(tabs)/pagamento?entregaId=${params.entregaId}`);
+          return;
+        }
+
         const arquivo = { uri: foto, name: `comprovante_${Date.now()}.jpg`, type: 'image/jpeg' };
         console.log('Chamando deliveryService.concluir...');
         const resConcluir = await deliveryService.concluir(params.entregaId, codigo, arquivo);
@@ -189,7 +195,7 @@ export default function EntregaDetalhes() {
         <Card icon="map-marker" title="Entrega" address={dadosEntrega?.endereco_entrega || params.destino || 'Endereço de destino'} destination />
 
         <View style={styles.payment}>
-          <Text style={styles.paymentLabel}>Você vai receber</Text>
+          <View><Text style={styles.paymentLabel}>Você vai receber</Text><Text style={styles.paymentMethod}>{dadosEntrega?.metodo_pagamento === 'CARTAO' ? 'Cartão na entrega' : dadosEntrega?.metodo_pagamento === 'DINHEIRO' ? 'Dinheiro na entrega' : 'Pix na entrega'}</Text></View>
           <Text style={styles.paymentValue}>R$ {Number(params.valor || 0).toFixed(2).replace('.', ',')}</Text>
         </View>
 
@@ -207,7 +213,7 @@ export default function EntregaDetalhes() {
         {status === 'A_CAMINHO_ENTREGA' && (
           <View style={styles.proof}>
             <Text style={styles.proofTitle}>Confirmação de entrega</Text>
-            <Text style={styles.proofText}>Use o código de 4 dígitos do cliente ou tire uma foto da entrega.</Text>
+            <Text style={styles.proofText}>Tire a foto, confirme o pagamento e finalize a entrega.</Text>
             <TextInput value={codigo} onChangeText={setCodigo} keyboardType="numeric" maxLength={4} placeholder="Código do cliente" style={styles.code} />
             <TouchableOpacity style={styles.camera} onPress={selecionarFoto}>
               <MaterialCommunityIcons name="camera" size={21} color="#1E4720" />
@@ -259,7 +265,7 @@ const styles = StyleSheet.create({
   cardTitle: { color: '#1E4720', fontWeight: 'bold' }, 
   cardAddress: { color: '#555', marginTop: 4 }, 
   payment: { margin: 16, backgroundColor: '#1E4720', padding: 17, borderRadius: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, 
-  paymentLabel: { color: '#CBE5CB' }, 
+  paymentLabel: { color: '#CBE5CB' }, paymentMethod: { color: '#fff', fontSize: 13, fontWeight: 'bold', marginTop: 4 },
   paymentValue: { color: '#fff', fontSize: 23, fontWeight: 'bold' }, 
   items: { backgroundColor: '#fff', marginHorizontal: 16, borderRadius: 12, padding: 16 }, 
   itemsTitle: { color: '#1E4720', fontSize: 16, fontWeight: 'bold', marginBottom: 8 }, 

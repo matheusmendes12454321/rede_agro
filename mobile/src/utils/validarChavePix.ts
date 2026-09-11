@@ -11,7 +11,18 @@ function validarDocumento(valor: string, pesos: number[]) {
   };
   return Number(digitos.at(-2)) === calcular(base, pesos) && Number(digitos.at(-1)) === calcular(`${base}${digitos.at(-2)}`, [6, ...pesos]);
 }
-export function validarCpf(chave: string) { const valor = chave.replace(/\D/g, ''); return valor.length === 11 && !todosIguais(valor) && validarDocumento(valor, [10, 9, 8, 7, 6, 5, 4, 3, 2]); }
+export function validarCpf(chave: string) {
+  const valor = chave.replace(/\D/g, '');
+  if (valor.length !== 11 || todosIguais(valor)) return false;
+  const calcular = (texto: string, pesoInicial: number) => {
+    const soma = texto.split('').reduce((total, digito, indice) => total + Number(digito) * (pesoInicial - indice), 0);
+    const resto = soma % 11;
+    return resto < 2 ? 0 : 11 - resto;
+  };
+  const primeiro = calcular(valor.slice(0, 9), 10);
+  const segundo = calcular(`${valor.slice(0, 9)}${primeiro}`, 11);
+  return Number(valor[9]) === primeiro && Number(valor[10]) === segundo;
+}
 export function validarCnpj(chave: string) { const valor = chave.replace(/\D/g, ''); return valor.length === 14 && !todosIguais(valor) && validarDocumento(valor, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]); }
 export function normalizarChavePix(chave: string, tipo: TipoChavePix) {
   if (tipo === 'CPF' || tipo === 'CNPJ') return chave.replace(/\D/g, '');
