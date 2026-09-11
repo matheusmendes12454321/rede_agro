@@ -11,16 +11,20 @@ import { obterRotaPorEstradas } from '../../src/services/route-service';
 
 type Coordenada = { latitude: number; longitude: number };
 type Entrega = { id: string; status: string; endereco_coleta: string; endereco_entrega: string; lat_coleta: number; lng_coleta: number; lat_entrega: number; lng_entrega: number; valor: number };
+type Transacao = { tipo?: string; valor?: number | string; status?: string; criado_em?: string };
 const centroBrasil: Coordenada = { latitude: -15.793889, longitude: -47.882778 };
+const moeda = (valor: number) => `R$ ${valor.toFixed(2).replace('.', ',')}`;
 
 export default function Home() {
   const router = useRouter();
   const { usuario } = useAuth();
-  const [online, setOnline] = useState(true);
+  const [online, setOnline] = useState(false);
   const [posicao, setPosicao] = useState<Coordenada>(centroBrasil);
   const [entrega, setEntrega] = useState<Entrega | null>(null);
   const [rota, setRota] = useState<Coordenada[]>([]);
   const [carregando, setCarregando] = useState(true);
+  const [saldo, setSaldo] = useState(0);
+  const [ganhosDia, setGanhosDia] = useState(0);
 
   const atualizarLocalizacao = useCallback(async () => {
     const permissao = await Location.requestForegroundPermissionsAsync();
@@ -36,9 +40,22 @@ export default function Home() {
     if (!usuario?.id) { setCarregando(false); return; }
     try {
       setCarregando(true);
-      const resposta = await api.get('/entregas');
+      const [resposta, carteira, perfil] = await Promise.all([
+        api.get('/entregas'),
+        api.get(`/carteira/${usuario.id}`),
+        api.get('/entregador/perfil'),
+      ]);
       const ativa = resposta.data.entregas?.[0] ?? null;
       setEntrega(ativa);
+      setSaldo(Number(carteira.data.saldo ?? 0));
+      setOnline(Boolean(perfil.data.perfil?.disponivel));
+      const hoje = new Date();
+      const creditosDeHoje = (carteira.data.extrato ?? []).reduce((total: number, item: Transacao) => {
+        const diaDaTransacao = item.criado_em ? new Date(item.criado_em) : null;
+        const eHoje = diaDaTransacao && diaDaTransacao.toDateString() === hoje.toDateString();
+        return eHoje && item.tipo === 'CREDITO' && item.status === 'CONCLUIDO' ? total + Number(item.valor ?? 0) : total;
+      }, 0);
+      setGanhosDia(creditosDeHoje);
     } catch (err: any) {
       Alert.alert('Não foi possível atualizar', err.response?.data?.error || 'Tente novamente.');
     } finally { setCarregando(false); }
@@ -79,7 +96,7 @@ export default function Home() {
     <View style={styles.availability}><TouchableOpacity onPress={() => router.push('/(tabs)/perfil')} style={styles.userIcon}><MaterialCommunityIcons name="account" size={25} color="#1E4720" /></TouchableOpacity><View style={styles.availabilityText}><Text style={styles.availabilityLabel}>{online ? 'Disponível' : 'Indisponível'}</Text><Text style={styles.availabilitySub}>{online ? 'Procurando novas corridas' : 'Você não receberá pedidos'}</Text></View><Switch value={online} onValueChange={alterarDisponibilidade} trackColor={{ false: '#919191', true: '#71C878' }} thumbColor="#fff" /></View>
     <TouchableOpacity style={styles.location} onPress={atualizarLocalizacao}><MaterialCommunityIcons name="crosshairs-gps" color="#1E4720" size={25} /></TouchableOpacity>
   </View>
-    <View style={styles.sheet}><View style={styles.handle} />{carregando ? <ActivityIndicator color="#23A24D" /> : entrega ? <><Text style={styles.sheetTitle}>Entrega em andamento</Text><Text style={styles.address}><MaterialCommunityIcons name="storefront" size={17} color="#1E4720" /> {entrega.endereco_coleta}</Text><Text style={styles.address}><MaterialCommunityIcons name="map-marker" size={17} color="#F05A28" /> {entrega.endereco_entrega}</Text><TouchableOpacity style={styles.primary} onPress={abrirDetalhes}><Text style={styles.primaryText}>VER DETALHES DA ENTREGA</Text></TouchableOpacity></> : <><Text style={styles.sheetTitle}>{online ? 'Procurando novas corridas' : 'Você está offline'}</Text><Text style={styles.sheetText}>{online ? 'Fique atento: novos pedidos aparecerão aqui.' : 'Ative a disponibilidade para receber pedidos.'}</Text><TouchableOpacity disabled={!online} style={[styles.primary, !online && styles.disabled]} onPress={() => router.push('/(tabs)/pedidos-teste')}><MaterialCommunityIcons name="clipboard-list-outline" color="#fff" size={21} /><Text style={styles.primaryText}>VER PEDIDOS DE TESTE</Text></TouchableOpacity></>}<View style={styles.earnings}><View><Text style={styles.earningsLabel}>Ganhos do dia</Text><Text style={styles.earningsValue}>R$ 123,00</Text><Text style={styles.balance}>saldo total: R$ 323,00</Text></View><TouchableOpacity onPress={() => router.push('/(tabs)/extrato')}><Text style={styles.more}>Ver mais</Text></TouchableOpacity></View></View>
+    <View style={styles.sheet}><View style={styles.handle} />{carregando ? <ActivityIndicator color="#23A24D" /> : entrega ? <><Text style={styles.sheetTitle}>Entrega em andamento</Text><Text style={styles.address}><MaterialCommunityIcons name="storefront" size={17} color="#1E4720" /> {entrega.endereco_coleta}</Text><Text style={styles.address}><MaterialCommunityIcons name="map-marker" size={17} color="#F05A28" /> {entrega.endereco_entrega}</Text><TouchableOpacity style={styles.primary} onPress={abrirDetalhes}><Text style={styles.primaryText}>VER DETALHES DA ENTREGA</Text></TouchableOpacity></> : <><Text style={styles.sheetTitle}>{online ? 'Procurando novas corridas' : 'Você está offline'}</Text><Text style={styles.sheetText}>{online ? 'Fique atento: novos pedidos aparecerão aqui.' : 'Ative a disponibilidade para receber pedidos.'}</Text><TouchableOpacity disabled={!online} style={[styles.primary, !online && styles.disabled]} onPress={() => router.push('/(tabs)/pedidos-teste')}><MaterialCommunityIcons name="clipboard-list-outline" color="#fff" size={21} /><Text style={styles.primaryText}>VER PEDIDOS DE TESTE</Text></TouchableOpacity></>}<View style={styles.earnings}><View><Text style={styles.earningsLabel}>Ganhos de hoje</Text><Text style={styles.earningsValue}>{moeda(ganhosDia)}</Text><Text style={styles.balance}>saldo total: {moeda(saldo)}</Text></View><TouchableOpacity onPress={() => router.push('/(tabs)/extrato')}><Text style={styles.more}>Ver mais</Text></TouchableOpacity></View></View>
   </SafeAreaView>;
 }
 

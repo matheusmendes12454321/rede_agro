@@ -2,10 +2,10 @@ git add .
 git commit -m "Descricao do que voce alterou"
 
 baixar mudanças
-git pull origin main
+git pull origin carteira
 
 minhas aletracoes + codigo novo
-git push origin main
+git push origin carteira
 dd
 arquivos modificados
 git status
