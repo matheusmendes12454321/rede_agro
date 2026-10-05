@@ -131,7 +131,7 @@ export default function EntregaDetalhes() {
         console.log('Resposta da carteira:', resCarteira.data);
 
         Alert.alert('Entrega concluída', 'O ganho foi lançado no extrato.', [
-          { text: 'Avaliar cliente', onPress: () => router.replace('/(tabs)/avaliar-cliente') }
+          { text: 'Avaliar cliente', onPress: () => router.replace(`/(tabs)/avaliar-cliente?entregaId=${params.entregaId}`) }
         ]);
         return;
       }

@@ -40,6 +40,8 @@ export const atualizarPerfil: RequestHandler = async (req, res) => {
           ? await supabase.from('Veiculo').update(dados).eq('id', existente.id)
           : await supabase.from('Veiculo').insert({ usuario_id: usuarioId, ...dados });
         if (error) throw error;
+        const { error: statusError } = await supabase.from('Usuario').update({ status: 'PENDENTE' }).eq('id', usuarioId);
+        if (statusError) throw statusError;
       }
     }
     res.json({ message: 'Perfil atualizado com sucesso.' });
@@ -65,5 +67,25 @@ export const reenviarDocumentos: RequestHandler = async (req, res) => {
     res.json({ message: 'Documentos enviados para nova análise.', status: 'PENDENTE' });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Não foi possível enviar os documentos.' });
+  }
+};
+
+export const atualizarFotoPerfil: RequestHandler = async (req, res) => {
+  try {
+    const arquivos = req.files as Record<string, Express.Multer.File[] | undefined> | undefined;
+    const foto = arquivos?.fotoPerfil?.[0];
+    if (!foto || !foto.mimetype.startsWith('image/')) {
+      res.status(400).json({ error: 'Selecione uma imagem válida para o perfil.' });
+      return;
+    }
+    const caminho = `perfil/${req.auth!.usuarioId}_${Date.now()}.${foto.mimetype.split('/')[1] || 'jpg'}`;
+    const { data, error } = await supabase.storage.from('documentos').upload(caminho, foto.buffer, { contentType: foto.mimetype, upsert: true });
+    if (error) throw error;
+    const url = supabase.storage.from('documentos').getPublicUrl(data.path).data.publicUrl;
+    const { error: fotoError } = await supabase.from('Foto').insert([{ usuario_id: req.auth!.usuarioId, tipo_documento: 'FOTO_PERFIL', url }]);
+    if (fotoError) throw fotoError;
+    res.json({ message: 'Foto do perfil atualizada.', url });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Não foi possível atualizar a foto.' });
   }
 };

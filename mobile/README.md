@@ -1,5 +1,12 @@
 # Welcome to your Expo app 👋
 
+## Configuração necessária para usar o app
+
+- A API Node em `server` precisa estar publicada e `EXPO_PUBLIC_API_URL` deve apontar para sua URL pública com `/api`.
+- Para enviar códigos de recuperação por WhatsApp real, configure no servidor `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE_NAME`, `WHATSAPP_TEMPLATE_LANGUAGE` e `WHATSAPP_GRAPH_API_VERSION`. O template da Meta precisa estar aprovado e conter um parâmetro no corpo para o código. Sem essas credenciais, o servidor em desenvolvimento só retorna um código de demonstração; em produção, o envio falha com uma mensagem de configuração.
+- `EXPO_PUBLIC_SUPPORT_WHATSAPP` recebe o número internacional da equipe de atendimento, somente dígitos (por exemplo, `55` + DDD + número). Sem ele, a ajuda continua disponível pelas perguntas frequentes e informa que o canal ainda não foi configurado.
+- A foto e os documentos usam o bucket `documentos` do Supabase. O bucket e as permissões de armazenamento precisam existir no projeto.
+
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
 ## Get started

@@ -11,6 +11,11 @@ function lerDados(value: unknown) {
   return JSON.parse(value);
 }
 
+function telefoneComparavel(value: unknown) {
+  const digitos = String(value ?? '').replace(/\D/g, '');
+  return digitos.length >= 12 && digitos.startsWith('55') ? digitos.slice(2) : digitos;
+}
+
 export async function uploadDocumento(usuarioId: string, arquivo: Express.Multer.File, pasta: string, tipoDocumento: string) {
   const extensao = arquivo.mimetype.split('/')[1] || 'jpg';
   const caminho = `${pasta}/${usuarioId}_${Date.now()}.${extensao}`;
@@ -167,7 +172,9 @@ export const enviarCodigoRecuperacao: RequestHandler = async (req, res) => {
       res.status(400).json({ error: 'Informe o telefone cadastrado, com DDD.' });
       return;
     }
-    const { data: usuario, error } = await supabase.from('Usuario').select('id, telefone').eq('telefone', telefone).maybeSingle();
+    const telefoneNormalizado = telefoneComparavel(telefone);
+    const { data: usuarios, error } = await supabase.from('Usuario').select('id, telefone').not('telefone', 'is', null);
+    const usuario = usuarios?.find((item) => telefoneComparavel(item.telefone) === telefoneNormalizado);
     if (error || !usuario?.telefone) {
       res.status(404).json({ error: 'Nenhuma conta foi encontrada para este telefone.' });
       return;
@@ -193,7 +200,14 @@ export const redefinirSenhaComCodigo: RequestHandler = async (req, res) => {
       res.status(400).json({ error: validacao.erro });
       return;
     }
-    const { error } = await supabase.from('Usuario').update({ senha: await bcrypt.hash(novaSenha, 12) }).eq('telefone', telefone);
+    const telefoneNormalizado = telefoneComparavel(telefone);
+    const { data: usuarios, error: buscaError } = await supabase.from('Usuario').select('id, telefone').not('telefone', 'is', null);
+    const usuario = usuarios?.find((item) => telefoneComparavel(item.telefone) === telefoneNormalizado);
+    if (buscaError || !usuario) {
+      res.status(404).json({ error: 'Nenhuma conta foi encontrada para este telefone.' });
+      return;
+    }
+    const { error } = await supabase.from('Usuario').update({ senha: await bcrypt.hash(novaSenha, 12) }).eq('id', usuario.id);
     if (error) throw error;
     res.status(200).json({ message: 'Senha atualizada com sucesso.' });
   } catch (error: any) {

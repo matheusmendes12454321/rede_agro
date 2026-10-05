@@ -8,4 +8,5 @@ const upload = multer({
 export const uploadCadastro = upload.fields([
   { name: 'fotoCnh', maxCount: 1 },
   { name: 'fotoDocumento', maxCount: 1 },
+  { name: 'fotoPerfil', maxCount: 1 },
 ]);

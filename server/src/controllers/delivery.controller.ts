@@ -203,8 +203,8 @@ export const confirmarFoto = async (req: any, res: any) => {
     const { entregaId } = req.params;
     const arquivo = req.file || (req.files && req.files[0]);
 
-    if (!arquivo) {
-      return res.status(400).json({ error: 'Nenhuma foto foi enviada.' });
+    if (!arquivo || !arquivo.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Envie uma foto válida para comprovar a entrega.' });
     }
 
     const entrega = await minhaEntrega(String(entregaId), req.auth!.usuarioId);
@@ -215,9 +215,16 @@ export const confirmarFoto = async (req: any, res: any) => {
       return res.status(400).json({ error: 'Confirme o pagamento antes de concluir a entrega.' });
     }
 
+    const caminho = `comprovantes/${entrega.id}_${Date.now()}.${arquivo.mimetype.split('/')[1] || 'jpg'}`;
+    const { data: arquivoSalvo, error: erroUpload } = await supabase.storage
+      .from('documentos')
+      .upload(caminho, arquivo.buffer, { contentType: arquivo.mimetype, upsert: true });
+    if (erroUpload) throw erroUpload;
+    const fotoUrl = supabase.storage.from('documentos').getPublicUrl(arquivoSalvo.path).data.publicUrl;
+
     const { data, error } = await supabase
       .from('Entrega')
-      .update({ status: 'ENTREGUE' })
+      .update({ status: 'ENTREGUE', foto_confirmacao_url: fotoUrl })
       .eq('id', entrega.id)
       .select()
       .single();
@@ -227,5 +234,25 @@ export const confirmarFoto = async (req: any, res: any) => {
     return res.status(200).json({ success: true, entrega: normalizarEntrega(data), message: 'Entrega concluída com foto!' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Erro ao confirmar foto.' });
+  }
+};
+
+export const avaliarEntrega: RequestHandler = async (req, res) => {
+  try {
+    const entrega = await minhaEntrega(String(req.params.entregaId), req.auth!.usuarioId);
+    if (!entrega || entrega.status !== 'ENTREGUE') {
+      res.status(404).json({ error: 'Entrega concluída não encontrada.' });
+      return;
+    }
+    const nota = Number(req.body.nota);
+    if (!Number.isInteger(nota) || nota < 1 || nota > 5) {
+      res.status(400).json({ error: 'Escolha uma nota de 1 a 5.' });
+      return;
+    }
+    const { error } = await supabase.from('Entrega').update({ avaliacao_cliente: nota }).eq('id', entrega.id);
+    if (error) throw error;
+    res.json({ message: 'Avaliação salva. Obrigado!', nota });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Não foi possível salvar a avaliação.' });
   }
 };

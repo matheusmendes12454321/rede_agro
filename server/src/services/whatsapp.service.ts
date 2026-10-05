@@ -7,8 +7,10 @@ type CodigoRecuperacao = {
 };
 
 const codigos = new Map<string, CodigoRecuperacao>();
+const ultimoEnvio = new Map<string, number>();
 const DURACAO_CODIGO_MS = 10 * 60 * 1000;
 const MAX_TENTATIVAS = 5;
+const INTERVALO_ENVIO_MS = 60 * 1000;
 
 function gerarCodigo() {
   return crypto.randomInt(100_000, 1_000_000).toString();
@@ -16,13 +18,16 @@ function gerarCodigo() {
 
 function normalizarTelefone(telefone: string) {
   const numeros = telefone.replace(/\D/g, '');
-  return numeros.startsWith('55') ? numeros : `55${numeros}`;
+  return numeros.length >= 12 && numeros.startsWith('55') ? numeros : `55${numeros}`;
 }
 
 export async function enviarCodigoWhatsApp(telefone: string) {
   const telefoneNormalizado = normalizarTelefone(telefone);
+  const ultimo = ultimoEnvio.get(telefoneNormalizado);
+  if (ultimo && Date.now() - ultimo < INTERVALO_ENVIO_MS) {
+    throw new Error('Aguarde um minuto antes de solicitar outro código.');
+  }
   const codigo = gerarCodigo();
-  codigos.set(telefoneNormalizado, { codigo, expiraEm: Date.now() + DURACAO_CODIGO_MS, tentativas: 0 });
 
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -32,11 +37,14 @@ export async function enviarCodigoWhatsApp(telefone: string) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('O envio por WhatsApp não está configurado no servidor.');
     }
+    codigos.set(telefoneNormalizado, { codigo, expiraEm: Date.now() + DURACAO_CODIGO_MS, tentativas: 0 });
+    ultimoEnvio.set(telefoneNormalizado, Date.now());
     console.log(`[WHATSAPP DEV] Código para ${telefoneNormalizado}: ${codigo}`);
     return { modo: 'desenvolvimento' as const, codigoDev: codigo };
   }
 
-  const resposta = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}/messages`, {
+  const versaoApi = process.env.WHATSAPP_GRAPH_API_VERSION || 'v22.0';
+  const resposta = await fetch(`https://graph.facebook.com/${versaoApi}/${phoneNumberId}/messages`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -55,6 +63,8 @@ export async function enviarCodigoWhatsApp(telefone: string) {
     const detalhe = await resposta.text();
     throw new Error(`Não foi possível enviar o código por WhatsApp: ${detalhe}`);
   }
+  codigos.set(telefoneNormalizado, { codigo, expiraEm: Date.now() + DURACAO_CODIGO_MS, tentativas: 0 });
+  ultimoEnvio.set(telefoneNormalizado, Date.now());
   return { modo: 'whatsapp' as const };
 }
 
@@ -70,7 +80,7 @@ export function validarCodigoWhatsApp(telefone: string, codigoInformado: string)
     return { valido: false, erro: 'Número máximo de tentativas atingido. Solicite um novo código.' };
   }
   registro.tentativas += 1;
-  if (codigoInformado.length !== 6 || !crypto.timingSafeEqual(Buffer.from(registro.codigo), Buffer.from(codigoInformado))) {
+  if (!/^\d{6}$/.test(codigoInformado) || !crypto.timingSafeEqual(Buffer.from(registro.codigo), Buffer.from(codigoInformado))) {
     return { valido: false, erro: 'Código inválido.' };
   }
   codigos.delete(telefoneNormalizado);

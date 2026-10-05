@@ -43,6 +43,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="avaliar-cliente" options={{ href: null }} />
       <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="explore" options={{ href: null }} />
+      <Tabs.Screen name="termos" options={{ href: null }} />
     </Tabs>
   );
 }
