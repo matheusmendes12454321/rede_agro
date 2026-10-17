@@ -69,7 +69,7 @@ const styles = StyleSheet.create({
   bottomArea: { 
     backgroundColor: '#fff', 
     paddingHorizontal: '12%', 
-    paddingVertical: 40,     
+    paddingVertical: 70,     
     gap: 14,
     width: '100%',
   },
