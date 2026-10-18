@@ -43,6 +43,10 @@ export default function Login() {
         lembreMe 
       });
 
+      if (!response.data?.usuario || !response.data?.token) {
+        throw new Error('O servidor respondeu em um formato inesperado. Tente novamente.');
+      }
+
       if (response.data.usuario.tipo === 'ADMIN') {
         router.replace({
           pathname: './admin',
@@ -51,12 +55,22 @@ export default function Login() {
         return;
       }
 
-      await entrar(response.data.usuario, response.data.token);
+      const usuario = response.data.usuario;
+      await entrar({
+        id: usuario.id,
+        nome: usuario.nome,
+        tipo: usuario.tipo,
+        status: usuario.status,
+      }, response.data.token);
       Alert.alert('Sucesso', 'Login realizado!');
-      router.replace('/(tabs)/home');
+      // O RootNavigator redireciona para a tela inicial assim que a sessão atualiza.
     } catch (err: any) {
       console.error('[ERRO NO LOGIN]:', err.response?.data || err.message);
-      const mensagem = err.response?.data?.error || err.response?.data?.message || 'Falha ao realizar login';
+      const mensagem = err.response?.data?.error
+        || err.response?.data?.message
+        || (err.request && !err.response
+          ? 'Não foi possível conectar ao servidor. Verifique sua internet e tente novamente.'
+          : err.message || 'Falha ao realizar login. Tente novamente.');
       if (mensagem.includes('PENDENTE')) {
         router.replace('./aguardando-aprovacao');
         return;
